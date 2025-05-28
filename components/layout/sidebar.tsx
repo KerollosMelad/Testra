@@ -1,12 +1,13 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { FolderOpen, MessageSquare, Settings, TestTube } from "lucide-react"
+import { Home, FolderOpen, MessageSquare, Settings, TestTube } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
 const navigation = [
-  { name: "Projects", href: "/", icon: FolderOpen },
+  { name: "Dashboard", href: "/", icon: Home },
+  { name: "Projects", href: "/projects", icon: FolderOpen },
   { name: "Test Cases", href: "/test-cases", icon: TestTube },
   { name: "AI Chat", href: "/chat", icon: MessageSquare },
   { name: "Settings", href: "/settings", icon: Settings },
@@ -31,7 +32,8 @@ export function Sidebar() {
       <nav className="flex-1 p-4">
         <ul className="space-y-2">
           {navigation.map((item) => {
-            const isActive = pathname === item.href
+            const isActive = pathname === item.href || 
+              (item.href === "/projects" && pathname.startsWith("/projects"))
             return (
               <li key={item.name}>
                 <Link

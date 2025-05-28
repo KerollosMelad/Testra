@@ -1,0 +1,25 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id             String   @id @default(uuid())
+  name           String
+  description    String?
+  organization   String
+  project        String
+  token          String
+  aiModel        String
+  temperature    Float
+  maxTokens      Int
+  autoGeneration Boolean
+  aiChat         Boolean
+  codeGeneration Boolean
+  createdAt      DateTime @default(now())
+  lastSync       DateTime?
+} 

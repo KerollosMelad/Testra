@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { GitBranch, RefreshCw, TestTube, FileText } from "lucide-react"
+import { GitBranch, RefreshCw, TestTube, FileText, CheckCircle, XCircle, AlertCircle } from "lucide-react"
 import Link from "next/link"
 
 interface Project {
@@ -15,6 +15,8 @@ interface Project {
   testsCount: number
   lastSync: Date
   createdAt: Date
+  isConnected?: boolean
+  error?: string
 }
 
 interface ProjectCardProps {
@@ -37,10 +39,31 @@ export function ProjectCard({ project }: ProjectCardProps) {
             <CardTitle className="text-lg">{project.name}</CardTitle>
             <CardDescription className="mt-1">{project.description}</CardDescription>
           </div>
-          <Badge variant="outline" className="flex items-center gap-1">
-            <GitBranch className="w-3 h-3" />
-            Azure DevOps
-          </Badge>
+          <div className="flex flex-col gap-1">
+            <Badge variant="outline" className="flex items-center gap-1">
+              <GitBranch className="w-3 h-3" />
+              Azure DevOps
+            </Badge>
+            {project.isConnected !== undefined && (
+              <Badge 
+                variant={project.isConnected ? "default" : "destructive"} 
+                className="flex items-center gap-1 text-xs"
+                title={project.error || (project.isConnected ? "Successfully connected to Azure DevOps" : "Failed to connect to Azure DevOps")}
+              >
+                {project.isConnected ? (
+                  <>
+                    <CheckCircle className="w-3 h-3" />
+                    Connected
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="w-3 h-3" />
+                    Failed
+                  </>
+                )}
+              </Badge>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -48,14 +71,25 @@ export function ProjectCard({ project }: ProjectCardProps) {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1">
               <FileText className="w-4 h-4 text-gray-500" />
-              <span>{project.storiesCount} stories</span>
+              <span className={project.isConnected === false ? "text-gray-400" : ""}>
+                {project.storiesCount} stories
+              </span>
             </div>
             <div className="flex items-center gap-1">
               <TestTube className="w-4 h-4 text-gray-500" />
-              <span>{project.testsCount} tests</span>
+              <span className={project.isConnected === false ? "text-gray-400" : ""}>
+                {project.testsCount} tests
+              </span>
             </div>
           </div>
         </div>
+
+        {project.error && (
+          <div className="flex items-start gap-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+            <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+            <span>{project.error}</span>
+          </div>
+        )}
 
         <div className="flex items-center justify-between text-xs text-gray-500">
           <span>Last sync: {formatDate(project.lastSync)}</span>

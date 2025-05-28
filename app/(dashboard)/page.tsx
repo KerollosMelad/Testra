@@ -2,49 +2,86 @@ import { ProjectCard } from "@/components/dashboard/project-card"
 import { StatsOverview } from "@/components/dashboard/stats-overview"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Plus } from "lucide-react"
 import Link from "next/link"
+import { prisma } from "@/lib/prisma"
+import { getProjectStats } from "@/lib/azure-devops"
 
-const mockProjects = [
-  {
-    id: "1",
-    name: "E-Commerce Platform",
-    description: "Main customer-facing web application",
-    source: "azure-devops" as const,
-    organization: "contoso",
-    project: "ecommerce",
-    storiesCount: 24,
-    testsCount: 156,
-    lastSync: new Date("2024-01-15T10:30:00Z"),
-    createdAt: new Date("2024-01-01T00:00:00Z"),
-  },
-  {
-    id: "2",
-    name: "Mobile App API",
-    description: "Backend services for mobile applications",
-    source: "azure-devops" as const,
-    organization: "contoso",
-    project: "mobile-api",
-    storiesCount: 18,
-    testsCount: 89,
-    lastSync: new Date("2024-01-14T15:45:00Z"),
-    createdAt: new Date("2023-12-15T00:00:00Z"),
-  },
-  {
-    id: "3",
-    name: "Admin Dashboard",
-    description: "Internal management and reporting tools",
-    source: "azure-devops" as const,
-    organization: "contoso",
-    project: "admin",
-    storiesCount: 12,
-    testsCount: 67,
-    lastSync: new Date("2024-01-13T09:20:00Z"),
-    createdAt: new Date("2024-01-10T00:00:00Z"),
-  },
-]
+export default async function DashboardPage() {
+  // Fetch real projects from database
+  const projects = await prisma.project.findMany({
+    orderBy: {
+      createdAt: 'desc'
+    },
+    take: 3 // Limit to 3 projects for dashboard view
+  })
 
-export default function DashboardPage() {
+  // Fetch stats for each project with error handling
+  const projectsWithStats = await Promise.allSettled(
+    projects.map(async (project) => {
+      try {
+        const stats = await getProjectStats(
+          project.organization,
+          project.project,
+          project.token
+        );
+        
+        return {
+          id: project.id,
+          name: project.name,
+          description: project.description || undefined,
+          source: "azure-devops" as const,
+          organization: project.organization,
+          project: project.project,
+          storiesCount: stats.storiesCount,
+          testsCount: stats.testsCount,
+          lastSync: project.lastSync || project.createdAt,
+          createdAt: project.createdAt,
+          isConnected: stats.isConnected,
+          error: stats.error,
+        };
+      } catch (error) {
+        return {
+          id: project.id,
+          name: project.name,
+          description: project.description || undefined,
+          source: "azure-devops" as const,
+          organization: project.organization,
+          project: project.project,
+          storiesCount: 0,
+          testsCount: 0,
+          lastSync: project.lastSync || project.createdAt,
+          createdAt: project.createdAt,
+          isConnected: false,
+          error: `Failed to fetch project stats: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        };
+      }
+    })
+  );
+
+  // Extract successful results and handle failures gracefully
+  const validProjects = projectsWithStats.map((result, index) => {
+    if (result.status === 'fulfilled') {
+      return result.value;
+    } else {
+      // Return project with default stats
+      const project = projects[index];
+      return {
+        id: project.id,
+        name: project.name,
+        description: project.description || undefined,
+        source: "azure-devops" as const,
+        organization: project.organization,
+        project: project.project,
+        storiesCount: 0,
+        testsCount: 0,
+        lastSync: project.lastSync || project.createdAt,
+        createdAt: project.createdAt,
+        isConnected: false,
+        error: `Promise failed: ${result.reason}`,
+      };
+    }
+  });
+
   return (
     <div className="space-y-6">
       {/* Welcome Section */}
@@ -53,12 +90,6 @@ export default function DashboardPage() {
           <h1 className="text-3xl font-bold text-gray-900">Welcome to Testra</h1>
           <p className="text-gray-600 mt-1">Manage your test automation projects and AI-generated test cases</p>
         </div>
-        <Link href="/projects/new">
-          <Button className="flex items-center gap-2">
-            <Plus className="w-4 h-4" />
-            New Project
-          </Button>
-        </Link>
       </div>
 
       {/* Stats Overview */}
@@ -96,12 +127,38 @@ export default function DashboardPage() {
 
       {/* Projects Grid */}
       <div>
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Your Projects</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {mockProjects.map((project) => (
-            <ProjectCard key={project.id} project={project} />
-          ))}
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold text-gray-900">Your Projects</h2>
+          {projects.length > 0 && (
+            <Link href="/projects">
+              <Button variant="outline" size="sm">
+                View All
+              </Button>
+            </Link>
+          )}
         </div>
+        
+        {projects.length === 0 ? (
+          <Card className="text-center py-8">
+            <CardContent>
+              <p className="text-gray-500 mb-4">No projects yet. Create your first project to get started!</p>
+              <Link href="/projects/new">
+                <Button>
+                  Create Project
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {validProjects.map((project) => (
+              <ProjectCard 
+                key={project.id} 
+                project={project}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
