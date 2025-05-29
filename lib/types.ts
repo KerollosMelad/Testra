@@ -15,6 +15,15 @@ export interface Project {
   lastSync?: Date
 }
 
+export interface WorkItemRelation {
+  id: string
+  relationType: 'parent' | 'child' | 'related' | 'predecessor' | 'successor'
+  workItemId: string
+  title: string
+  workItemType: 'User Story' | 'Task' | 'Bug' | 'Feature'
+  state: string
+}
+
 export interface WorkItem {
   id: string
   title: string
@@ -25,22 +34,35 @@ export interface WorkItem {
   priority?: number
   acceptanceCriteria?: string
   tags: string[]
-  createdDate: Date
-  changedDate: Date
+  createdDate: string | null
+  changedDate: string | null
   projectId?: string
+  parentId?: string
+  children: WorkItemRelation[]
+  relatedItems: WorkItemRelation[]
+  isUserStory: boolean
+  isTask: boolean
+  hasChildren: boolean
+  hasParent: boolean
 }
 
 export interface TestCase {
   id: string
-  workItemId: string
-  projectId: string
   title: string
   description: string
-  type: 'unit' | 'integration' | 'e2e'
+  type: 'unit' | 'integration' | 'e2e' | 'api'
+  priority: 'low' | 'medium' | 'high'
+  status: 'draft' | 'active' | 'deprecated'
   steps: TestStep[]
   expectedResult: string
-  priority: 'low' | 'medium' | 'high'
-  generatedAt: Date
+  preconditions?: string
+  testData?: Record<string, any>
+  estimatedDuration?: number
+  projectId: string
+  createdAt: Date
+  updatedAt: Date
+  generatedAt?: Date
+  generatedBy?: 'ai' | 'manual'
   generatedCode?: string
 }
 
@@ -48,4 +70,53 @@ export interface TestStep {
   step: number
   action: string
   expectedOutcome: string
+  testData?: Record<string, any>
+}
+
+export interface TestCaseWorkItemRelation {
+  id: string
+  testCaseId: string
+  workItemId: string
+  relationType: 'covers' | 'validates' | 'depends_on'
+  createdAt: Date
+}
+
+export interface TestSuite {
+  id: string
+  name: string
+  description?: string
+  type: 'smoke' | 'regression' | 'integration' | 'custom'
+  projectId: string
+  testCases: string[]
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface TestCaseRelation {
+  id: string
+  parentTestCaseId: string
+  childTestCaseId: string
+  relationType: 'prerequisite' | 'follows' | 'blocks'
+  createdAt: Date
+}
+
+export interface TestGenerationContext {
+  project: {
+    name: string
+    domain?: string
+    businessRules?: string[]
+  }
+  userStory: WorkItem
+  relatedTasks: WorkItem[]
+  existingTestCases: TestCase[]
+  testType: 'unit' | 'integration' | 'e2e' | 'api'
+  coverageLevel: 'basic' | 'comprehensive' | 'custom'
+  customRequirements?: string
+}
+
+export interface TestGenerationResult {
+  testCases: Omit<TestCase, 'id' | 'createdAt' | 'updatedAt'>[]
+  relationships: Omit<TestCaseWorkItemRelation, 'id' | 'createdAt'>[]
+  suggestions: string[]
+  confidence: number
 }

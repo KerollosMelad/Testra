@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { WorkItem, WorkItemRelation } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,13 +12,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required parameters: organization, project, pat' }, { status: 400 });
     }
 
-    // WIQL query to get User Stories, Tasks, Bugs, and Features
+    // WIQL query to get User Stories, Tasks, Bugs, and Features with relationships
     const wiqlQuery = {
       query: `
         SELECT [System.Id], [System.Title], [System.Description], [System.WorkItemType], 
                [System.State], [System.AssignedTo], [Microsoft.VSTS.Common.Priority], 
                [Microsoft.VSTS.Common.AcceptanceCriteria], [System.Tags], 
-               [System.CreatedDate], [System.ChangedDate]
+               [System.CreatedDate], [System.ChangedDate], [System.Parent]
         FROM WorkItems 
         WHERE [System.TeamProject] = '${project}' 
         AND [System.WorkItemType] IN ('User Story', 'Task', 'Bug', 'Feature')
@@ -47,8 +48,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ workItems: [] });
     }
 
-    // Fetch detailed work item information
-    const batchUrl = `https://dev.azure.com/${organization}/_apis/wit/workitems?ids=${workItemIds.join(',')}&$expand=all&api-version=7.0`;
+    // Fetch detailed work item information with relations
+    const batchUrl = `https://dev.azure.com/${organization}/_apis/wit/workitems?ids=${workItemIds.join(',')}&$expand=relations&api-version=7.0`;
     const batchResponse = await fetch(batchUrl, {
       headers: {
         'Authorization': 'Basic ' + Buffer.from(':' + pat).toString('base64'),
@@ -62,22 +63,104 @@ export async function GET(request: NextRequest) {
 
     const batchResult = await batchResponse.json();
     
-    // Transform the data to match our interface
-    const workItems = batchResult.value?.map((item: any) => ({
-      id: item.id.toString(),
-      title: item.fields['System.Title'] || '',
-      description: item.fields['System.Description'] || '',
-      workItemType: item.fields['System.WorkItemType'] || '',
-      state: item.fields['System.State'] || '',
-      assignedTo: item.fields['System.AssignedTo']?.displayName || null,
-      priority: item.fields['Microsoft.VSTS.Common.Priority'] || null,
-      acceptanceCriteria: item.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || null,
-      tags: item.fields['System.Tags'] ? item.fields['System.Tags'].split(';').map((tag: string) => tag.trim()) : [],
-      createdDate: item.fields['System.CreatedDate'] || null,
-      changedDate: item.fields['System.ChangedDate'] || null,
-    })) || [];
+    // Helper function to extract work item ID from URL
+    const extractWorkItemId = (url: string): string => {
+      const match = url.match(/workItems\/(\d+)/);
+      return match ? match[1] : '';
+    };
 
-    return NextResponse.json({ workItems, total: workItems.length });
+    // Helper function to determine relation type
+    const getRelationType = (relType: string): 'parent' | 'child' | 'related' | 'predecessor' | 'successor' => {
+      if (relType.includes('Parent')) return 'parent';
+      if (relType.includes('Child')) return 'child';
+      if (relType.includes('Predecessor')) return 'predecessor';
+      if (relType.includes('Successor')) return 'successor';
+      return 'related';
+    };
+
+    // Create a map for quick lookup of work item details
+    const workItemMap = new Map();
+    batchResult.value?.forEach((item: any) => {
+      workItemMap.set(item.id.toString(), {
+        id: item.id.toString(),
+        title: item.fields['System.Title'] || '',
+        workItemType: item.fields['System.WorkItemType'] || '',
+        state: item.fields['System.State'] || '',
+      });
+    });
+
+    // Transform the data to match our interface with relationships
+    const workItems: WorkItem[] = batchResult.value?.map((item: any) => {
+      const children: WorkItemRelation[] = [];
+      const relatedItems: WorkItemRelation[] = [];
+      let parentId: string | undefined;
+
+      // Process relations if they exist
+      if (item.relations) {
+        item.relations.forEach((relation: any) => {
+          const relatedWorkItemId = extractWorkItemId(relation.url);
+          const relatedWorkItem = workItemMap.get(relatedWorkItemId);
+          
+          if (relatedWorkItem) {
+            const relationType = getRelationType(relation.rel);
+            const relationData: WorkItemRelation = {
+              id: relatedWorkItemId,
+              relationType,
+              workItemId: relatedWorkItemId,
+              title: relatedWorkItem.title,
+              workItemType: relatedWorkItem.workItemType,
+              state: relatedWorkItem.state,
+            };
+
+            if (relationType === 'parent') {
+              parentId = relatedWorkItemId;
+              relatedItems.push(relationData);
+            } else if (relationType === 'child') {
+              children.push(relationData);
+            } else {
+              relatedItems.push(relationData);
+            }
+          }
+        });
+      }
+
+      const workItemType = item.fields['System.WorkItemType'] || '';
+      
+      return {
+        id: item.id.toString(),
+        title: item.fields['System.Title'] || '',
+        description: item.fields['System.Description'] || '',
+        workItemType: workItemType as 'User Story' | 'Task' | 'Bug' | 'Feature',
+        state: item.fields['System.State'] || '',
+        assignedTo: item.fields['System.AssignedTo']?.displayName || undefined,
+        priority: item.fields['Microsoft.VSTS.Common.Priority'] || undefined,
+        acceptanceCriteria: item.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || undefined,
+        tags: item.fields['System.Tags'] ? item.fields['System.Tags'].split(';').map((tag: string) => tag.trim()) : [],
+        createdDate: item.fields['System.CreatedDate'] || null,
+        changedDate: item.fields['System.ChangedDate'] || null,
+        // Enhanced relationship data
+        parentId,
+        children,
+        relatedItems,
+        // Computed fields
+        isUserStory: workItemType === 'User Story',
+        isTask: workItemType === 'Task',
+        hasChildren: children.length > 0,
+        hasParent: !!parentId,
+      };
+    }) || [];
+
+    return NextResponse.json({ 
+      workItems, 
+      total: workItems.length,
+      summary: {
+        userStories: workItems.filter(item => item.isUserStory).length,
+        tasks: workItems.filter(item => item.isTask).length,
+        bugs: workItems.filter(item => item.workItemType === 'Bug').length,
+        features: workItems.filter(item => item.workItemType === 'Feature').length,
+        withRelationships: workItems.filter(item => item.hasChildren || item.hasParent).length,
+      }
+    });
   } catch (error) {
     console.error('Error fetching work items:', error);
     return NextResponse.json({ error: 'Failed to fetch work items from Azure DevOps' }, { status: 500 });

@@ -95,6 +95,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
             organization={project.organization}
             project={project.project}
             token={project.token}
+            projectId={project.id}
           />
         </CardContent>
       </Card>
