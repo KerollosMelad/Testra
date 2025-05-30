@@ -1,13 +1,44 @@
-'use client'
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+"use client";
+import { useState, useEffect } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, User, Calendar, Tag, Sparkles, GitBranch, ArrowRight, Users, ChevronDown, ChevronRight, RefreshCw, Database, Cloud, CheckCircle } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Search,
+  User,
+  Calendar,
+  Tag,
+  Sparkles,
+  GitBranch,
+  ArrowRight,
+  Users,
+  ChevronDown,
+  ChevronRight,
+  RefreshCw,
+  Database,
+  Cloud,
+  CheckCircle,
+} from "lucide-react";
 import { WorkItem } from "@/lib/types";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { TestGenerationDialog } from "@/components/test-generation/test-generation-dialog";
 import { toast } from "sonner";
 
@@ -30,21 +61,37 @@ interface WorkItemsResponse {
   };
 }
 
-export function WorkItemsList({ organization, project, token, projectId }: WorkItemsListProps) {
+export function WorkItemsList({
+  organization,
+  project,
+  token,
+  projectId,
+}: WorkItemsListProps) {
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
-  const [summary, setSummary] = useState<WorkItemsResponse['summary'] | null>(null);
+  const [summary, setSummary] = useState<WorkItemsResponse["summary"] | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<string>('all');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showHierarchy, setShowHierarchy] = useState(true);
+  const [filter, setFilter] = useState<string>("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showHierarchy, setShowHierarchy] = useState(() => {
+    // Try to get the saved preference from localStorage
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(`hierarchy-view-${projectId}`);
+      return saved !== null ? saved === "true" : true;
+    }
+    return true;
+  });
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const [dataSource, setDataSource] = useState<'database' | 'live'>('database');
-  
+  const [dataSource, setDataSource] = useState<"database" | "live">("database");
+
   // Test generation dialog state
   const [testDialogOpen, setTestDialogOpen] = useState(false);
-  const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItem | null>(null);
+  const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItem | null>(
+    null,
+  );
 
   useEffect(() => {
     fetchWorkItems();
@@ -55,44 +102,65 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
     setError(null);
     try {
       let data: WorkItemsResponse;
-      
-      if (dataSource === 'database' && projectId) {
+
+      if (dataSource === "database" && projectId) {
         // Try to fetch from database first
         const params = new URLSearchParams({ projectId });
         const res = await fetch(`/api/work-items?${params}`);
-        
+
         if (res.ok) {
           data = await res.json();
           // If no work items in database, fall back to live data
           if (data.workItems.length === 0) {
-            setDataSource('live');
+            setDataSource("live");
             return; // This will trigger useEffect again with live data
           }
         } else {
-          throw new Error('Failed to fetch work items from database');
+          throw new Error("Failed to fetch work items from database");
         }
       } else {
+        // Fetch project details to get work item types if available
+        let workItemTypes;
+        if (projectId) {
+          try {
+            const projectRes = await fetch(`/api/projects?id=${projectId}`);
+            if (projectRes.ok) {
+              const projectData = await projectRes.json();
+              workItemTypes = projectData.workItemTypes;
+            }
+          } catch (err) {
+            console.error("Failed to fetch project details:", err);
+          }
+        }
+
         // Fetch from Azure DevOps directly
         const params = new URLSearchParams({
           organization,
           project,
           pat: token,
         });
+
+        // Add work item types if available
+        if (workItemTypes) {
+          params.append("workItemTypes", JSON.stringify(workItemTypes));
+        }
+
         const res = await fetch(`/api/azure/work-items?${params}`);
-        if (!res.ok) throw new Error('Failed to fetch work items from Azure DevOps');
+        if (!res.ok)
+          throw new Error("Failed to fetch work items from Azure DevOps");
         data = await res.json();
       }
-      
+
       setWorkItems(data.workItems || []);
       setSummary(data.summary);
-      
+
       // Auto-expand user stories that have children
       const userStoriesWithChildren = data.workItems
-        .filter(item => item.isUserStory && item.hasChildren)
-        .map(item => item.id);
+        .filter((item) => item.isUserStory && item.hasChildren)
+        .map((item) => item.id);
       setExpandedItems(new Set(userStoriesWithChildren));
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch work items');
+      setError(err.message || "Failed to fetch work items");
     } finally {
       setLoading(false);
     }
@@ -100,16 +168,16 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
 
   async function syncWorkItems() {
     if (!projectId) {
-      toast.error('Project ID is required for syncing');
+      toast.error("Project ID is required for syncing");
       return;
     }
 
     setSyncing(true);
     try {
-      const response = await fetch('/api/azure/work-items/sync', {
-        method: 'POST',
+      const response = await fetch("/api/azure/work-items/sync", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           projectId,
@@ -120,21 +188,34 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
       });
 
       if (!response.ok) {
-        throw new Error('Failed to sync work items');
+        throw new Error("Failed to sync work items");
       }
 
       const result = await response.json();
-      toast.success(`Sync completed: ${result.synced} new, ${result.updated} updated`);
-      
+      const deletedText = result.deleted > 0 ? `, ${result.deleted} deleted` : '';
+      toast.success(
+        `Sync completed: ${result.synced} new, ${result.updated} updated${deletedText}`,
+      );
+
       // Switch to database view and refresh
-      setDataSource('database');
+      setDataSource("database");
       fetchWorkItems();
     } catch (err: any) {
-      toast.error(err.message || 'Failed to sync work items');
+      toast.error(err.message || "Failed to sync work items");
     } finally {
       setSyncing(false);
     }
   }
+
+  // Save hierarchy view preference when it changes
+  useEffect(() => {
+    if (typeof window !== "undefined" && projectId) {
+      localStorage.setItem(
+        `hierarchy-view-${projectId}`,
+        showHierarchy.toString(),
+      );
+    }
+  }, [showHierarchy, projectId]);
 
   const toggleExpanded = (itemId: string) => {
     const newExpanded = new Set(expandedItems);
@@ -146,161 +227,255 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
     setExpandedItems(newExpanded);
   };
 
-  const filteredWorkItems = workItems.filter(item => {
-    const matchesFilter = filter === 'all' || item.workItemType === filter;
-    const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.description.toLowerCase().includes(searchTerm.toLowerCase());
+  // Build tree structure for hierarchy view
+  const buildTreeStructure = (items: WorkItem[]) => {
+    console.log("🔍 DEBUG: All work items:", items);
+    
+    // Check what parent-child relationships exist
+    const itemsWithParents = items.filter(item => item.parentId);
+    const itemsWithChildren = items.filter(item => item.hasChildren);
+    
+    console.log("📊 DEBUG: Items with parentId:", itemsWithParents.map(item => ({
+      id: item.id,
+      title: item.title,
+      parentId: item.parentId,
+      workItemType: item.workItemType
+    })));
+    
+    console.log("👨‍👩‍👧‍👦 DEBUG: Items with children flag:", itemsWithChildren.map(item => ({
+      id: item.id,
+      title: item.title,
+      hasChildren: item.hasChildren,
+      childrenArray: item.children,
+      workItemType: item.workItemType
+    })));
+
+    const itemMap = new Map<string, WorkItem & { computedChildren: WorkItem[] }>();
+    const rootItems: (WorkItem & { computedChildren: WorkItem[] })[] = [];
+
+    // First pass: create map of all items with empty children arrays
+    items.forEach(item => {
+      itemMap.set(item.id, { ...item, computedChildren: [] });
+    });
+
+    // Second pass: build parent-child relationships
+    items.forEach(item => {
+      const currentItem = itemMap.get(item.id)!;
+      
+      // If item has a parent, add it to parent's children
+      if (item.parentId && itemMap.has(item.parentId)) {
+        const parent = itemMap.get(item.parentId)!;
+        parent.computedChildren.push(currentItem);
+        console.log(`🔗 DEBUG: Added child ${item.id} (${item.title}) to parent ${item.parentId}`);
+      } else {
+        // No parent, so it's a root item
+        rootItems.push(currentItem);
+        console.log(`🌳 DEBUG: Added root item ${item.id} (${item.title})`);
+      }
+    });
+
+    console.log("🏗️ DEBUG: Final tree structure:", rootItems.map(item => ({
+      id: item.id,
+      title: item.title,
+      computedChildrenCount: item.computedChildren.length,
+      computedChildren: item.computedChildren.map(child => ({ id: child.id, title: child.title }))
+    })));
+
+    return rootItems;
+  };
+
+  const filteredWorkItems = workItems.filter((item: WorkItem) => {
+    const matchesFilter = filter === "all" || item.workItemType === filter;
+    const matchesSearch =
+      item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.description.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesFilter && matchesSearch;
   });
 
-  // Group work items by hierarchy if showing hierarchy view
+  // Organize work items based on view mode
   const organizedWorkItems = showHierarchy 
-    ? filteredWorkItems.filter(item => !item.hasParent) // Only show top-level items
-    : filteredWorkItems;
+    ? buildTreeStructure(filteredWorkItems)
+    : filteredWorkItems.map(item => ({ ...item, computedChildren: [] }));
 
   const getWorkItemTypeColor = (type: string) => {
     switch (type) {
-      case 'User Story': return 'bg-blue-100 text-blue-800';
-      case 'Task': return 'bg-green-100 text-green-800';
-      case 'Bug': return 'bg-red-100 text-red-800';
-      case 'Feature': return 'bg-purple-100 text-purple-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case "User Story":
+        return "bg-blue-100 text-blue-800";
+      case "Task":
+        return "bg-green-100 text-green-800";
+      case "Bug":
+        return "bg-red-100 text-red-800";
+      case "Feature":
+        return "bg-purple-100 text-purple-800";
+      default:
+        return "bg-gray-100 text-gray-800";
     }
   };
 
   const getStateColor = (state: string) => {
     switch (state.toLowerCase()) {
-      case 'new': return 'bg-gray-100 text-gray-800';
-      case 'active': return 'bg-yellow-100 text-yellow-800';
-      case 'resolved': return 'bg-blue-100 text-blue-800';
-      case 'closed': return 'bg-green-100 text-green-800';
-      case 'done': return 'bg-green-100 text-green-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case "new":
+        return "bg-gray-100 text-gray-800";
+      case "active":
+        return "bg-yellow-100 text-yellow-800";
+      case "resolved":
+        return "bg-blue-100 text-blue-800";
+      case "closed":
+        return "bg-green-100 text-green-800";
+      case "done":
+        return "bg-green-100 text-green-800";
+      default:
+        return "bg-gray-100 text-gray-800";
     }
   };
 
   const getChildWorkItems = (parentId: string): WorkItem[] => {
-    return workItems.filter(item => item.parentId === parentId);
+    return workItems.filter((item) => item.parentId === parentId);
   };
 
-  const renderWorkItem = (item: WorkItem, isChild: boolean = false) => (
-    <Card key={item.id} className={`hover:shadow-md transition-shadow ${isChild ? 'ml-6 border-l-4 border-l-blue-200' : ''}`}>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-2">
-              {item.hasChildren && !isChild && (
-                <Collapsible open={expandedItems.has(item.id)} onOpenChange={() => toggleExpanded(item.id)}>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" size="sm" className="p-0 h-auto">
-                      {expandedItems.has(item.id) ? 
-                        <ChevronDown className="w-4 h-4" /> : 
-                        <ChevronRight className="w-4 h-4" />
-                      }
-                    </Button>
-                  </CollapsibleTrigger>
-                </Collapsible>
-              )}
-              <Badge className={getWorkItemTypeColor(item.workItemType)}>
-                {item.workItemType}
-              </Badge>
-              <Badge variant="outline" className={getStateColor(item.state)}>
-                {item.state}
-              </Badge>
-              <span className="text-sm text-gray-500">#{item.id}</span>
-              {item.hasChildren && (
-                <Badge variant="secondary" className="text-xs">
-                  <Users className="w-3 h-3 mr-1" />
-                  {item.children.length} child{item.children.length !== 1 ? 'ren' : ''}
+  const renderWorkItemTree = (item: WorkItem & { computedChildren: WorkItem[] }, level: number = 0) => (
+    <div key={item.id} className={level > 0 ? "ml-6 border-l-2 border-gray-200 pl-4" : ""}>
+      <Card className="hover:shadow-md transition-shadow mb-2">
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-2">
+                {item.computedChildren.length > 0 && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="p-0 h-auto"
+                    onClick={() => toggleExpanded(item.id)}
+                  >
+                    {expandedItems.has(item.id) ? (
+                      <ChevronDown className="w-4 h-4" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4" />
+                    )}
+                  </Button>
+                )}
+                <Badge className={getWorkItemTypeColor(item.workItemType)}>
+                  {item.workItemType}
                 </Badge>
-              )}
-              {item.hasParent && (
-                <Badge variant="outline" className="text-xs">
-                  <GitBranch className="w-3 h-3 mr-1" />
-                  Child of #{item.parentId}
+                <Badge variant="outline" className={getStateColor(item.state)}>
+                  {item.state}
                 </Badge>
+                <span className="text-sm text-gray-500">#{item.id}</span>
+                {item.computedChildren.length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    <Users className="w-3 h-3 mr-1" />
+                    {item.computedChildren.length} child{item.computedChildren.length !== 1 ? "ren" : ""}
+                  </Badge>
+                )}
+                {level > 0 && (
+                  <Badge variant="outline" className="text-xs">
+                    <GitBranch className="w-3 h-3 mr-1" />
+                    Child item
+                  </Badge>
+                )}
+              </div>
+              <CardTitle className="text-lg">{item.title}</CardTitle>
+              {item.description && (
+                <CardDescription className="mt-1 line-clamp-2">
+                  {item.description.replace(/<[^>]*>/g, "")}
+                </CardDescription>
               )}
-            </div>
-            <CardTitle className="text-lg">{item.title}</CardTitle>
-            {item.description && (
-              <CardDescription className="mt-1 line-clamp-2">
-                {item.description.replace(/<[^>]*>/g, '')}
-              </CardDescription>
-            )}
-            {item.acceptanceCriteria && (
-              <div className="mt-2 p-2 bg-blue-50 rounded text-sm">
-                <strong>Acceptance Criteria:</strong>
-                <div className="mt-1 text-gray-700">
-                  {item.acceptanceCriteria.replace(/<[^>]*>/g, '').substring(0, 200)}...
+              {item.acceptanceCriteria && (
+                <div className="mt-2 p-2 bg-blue-50 rounded text-sm">
+                  <strong>Acceptance Criteria:</strong>
+                  <div className="mt-1 text-gray-700">
+                    {item.acceptanceCriteria
+                      .replace(/<[^>]*>/g, "")
+                      .substring(0, 200)}
+                    ...
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-          <Button variant="outline" size="sm" className="flex items-center gap-1" onClick={() => handleGenerateTests(item)}>
-            <Sparkles className="w-3 h-3" />
-            Generate Tests
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <div className="flex items-center justify-between text-sm text-gray-500">
-          <div className="flex items-center gap-4">
-            {item.assignedTo && (
-              <div className="flex items-center gap-1">
-                <User className="w-3 h-3" />
-                <span>{item.assignedTo}</span>
-              </div>
-            )}
-            {item.priority && (
-              <div className="flex items-center gap-1">
-                <span>Priority: {item.priority}</span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            <Calendar className="w-3 h-3" />
-            <span>{item.changedDate ? new Date(item.changedDate).toLocaleDateString() : 'N/A'}</span>
-          </div>
-        </div>
-        {item.tags.length > 0 && (
-          <div className="flex items-center gap-2 mt-2">
-            <Tag className="w-3 h-3 text-gray-400" />
-            <div className="flex gap-1 flex-wrap">
-              {item.tags.map((tag, index) => (
-                <Badge key={index} variant="secondary" className="text-xs">
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        )}
-        
-        {/* Related Items */}
-        {item.relatedItems.length > 0 && (
-          <div className="mt-3 pt-3 border-t">
-            <div className="text-xs text-gray-500 mb-2">Related Items:</div>
-            <div className="flex gap-2 flex-wrap">
-              {item.relatedItems.slice(0, 3).map((related) => (
-                <Badge key={related.id} variant="outline" className="text-xs">
-                  <ArrowRight className="w-3 h-3 mr-1" />
-                  {related.workItemType} #{related.id}
-                </Badge>
-              ))}
-              {item.relatedItems.length > 3 && (
-                <Badge variant="outline" className="text-xs">
-                  +{item.relatedItems.length - 3} more
-                </Badge>
               )}
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-1"
+              onClick={() => handleGenerateTests(item)}
+            >
+              <Sparkles className="w-3 h-3" />
+              Generate Tests
+            </Button>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="flex items-center justify-between text-sm text-gray-500">
+            <div className="flex items-center gap-4">
+              {item.assignedTo && (
+                <div className="flex items-center gap-1">
+                  <User className="w-3 h-3" />
+                  <span>{item.assignedTo}</span>
+                </div>
+              )}
+              {item.priority && (
+                <div className="flex items-center gap-1">
+                  <span>Priority: {item.priority}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              <span>
+                {item.changedDate
+                  ? new Date(item.changedDate).toLocaleDateString()
+                  : "N/A"}
+              </span>
+            </div>
+          </div>
+          {item.tags.length > 0 && (
+            <div className="flex items-center gap-2 mt-2">
+              <Tag className="w-3 h-3 text-gray-400" />
+              <div className="flex gap-1 flex-wrap">
+                {item.tags.map((tag, index) => (
+                  <Badge key={index} variant="secondary" className="text-xs">
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Related Items */}
+          {item.relatedItems.length > 0 && (
+            <div className="mt-3 pt-3 border-t">
+              <div className="text-xs text-gray-500 mb-2">Related Items:</div>
+              <div className="flex gap-2 flex-wrap">
+                {item.relatedItems.slice(0, 3).map((related) => (
+                  <Badge key={related.id} variant="outline" className="text-xs">
+                    <ArrowRight className="w-3 h-3 mr-1" />
+                    {related.workItemType} #{related.id}
+                  </Badge>
+                ))}
+                {item.relatedItems.length > 3 && (
+                  <Badge variant="outline" className="text-xs">
+                    +{item.relatedItems.length - 3} more
+                  </Badge>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      
+      {/* Render children if expanded */}
+      {item.computedChildren.length > 0 && expandedItems.has(item.id) && (
+        <div className="mt-2">
+          {item.computedChildren.map((childItem) => 
+            renderWorkItemTree(childItem as WorkItem & { computedChildren: WorkItem[] }, level + 1)
+          )}
+        </div>
+      )}
+    </div>
   );
 
   const handleGenerateTests = (workItem: WorkItem) => {
     if (!projectId) {
-      alert('Project ID is required for test generation');
+      alert("Project ID is required for test generation");
       return;
     }
     setSelectedWorkItem(workItem);
@@ -321,23 +496,33 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card className="p-4">
-            <div className="text-2xl font-bold text-blue-600">{summary.userStories}</div>
+            <div className="text-2xl font-bold text-blue-600">
+              {summary.userStories}
+            </div>
             <div className="text-sm text-gray-600">User Stories</div>
           </Card>
           <Card className="p-4">
-            <div className="text-2xl font-bold text-green-600">{summary.tasks}</div>
+            <div className="text-2xl font-bold text-green-600">
+              {summary.tasks}
+            </div>
             <div className="text-sm text-gray-600">Tasks</div>
           </Card>
           <Card className="p-4">
-            <div className="text-2xl font-bold text-red-600">{summary.bugs}</div>
+            <div className="text-2xl font-bold text-red-600">
+              {summary.bugs}
+            </div>
             <div className="text-sm text-gray-600">Bugs</div>
           </Card>
           <Card className="p-4">
-            <div className="text-2xl font-bold text-purple-600">{summary.features}</div>
+            <div className="text-2xl font-bold text-purple-600">
+              {summary.features}
+            </div>
             <div className="text-sm text-gray-600">Features</div>
           </Card>
           <Card className="p-4">
-            <div className="text-2xl font-bold text-orange-600">{summary.withRelationships}</div>
+            <div className="text-2xl font-bold text-orange-600">
+              {summary.withRelationships}
+            </div>
             <div className="text-sm text-gray-600">With Relations</div>
           </Card>
         </div>
@@ -348,15 +533,25 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">Data Source:</span>
-            <Badge variant={dataSource === 'database' ? 'default' : 'secondary'} className="flex items-center gap-1">
-              {dataSource === 'database' ? <Database className="w-3 h-3" /> : <Cloud className="w-3 h-3" />}
-              {dataSource === 'database' ? 'Database' : 'Live (Azure DevOps)'}
+            <Badge
+              variant={dataSource === "database" ? "default" : "secondary"}
+              className="flex items-center gap-1"
+            >
+              {dataSource === "database" ? (
+                <Database className="w-3 h-3" />
+              ) : (
+                <Cloud className="w-3 h-3" />
+              )}
+              {dataSource === "database" ? "Database" : "Live (Azure DevOps)"}
             </Badge>
           </div>
-          {dataSource === 'database' && workItems.length > 0 && (
+          {dataSource === "database" && workItems.length > 0 && (
             <div className="flex items-center gap-1 text-sm text-gray-600">
               <CheckCircle className="w-3 h-3 text-green-600" />
-              Last synced: {workItems[0]?.lastSyncAt ? new Date(workItems[0].lastSyncAt).toLocaleString() : 'Unknown'}
+              Last synced:{" "}
+              {workItems[0]?.lastSyncAt
+                ? new Date(workItems[0].lastSyncAt).toLocaleString()
+                : "Unknown"}
             </div>
           )}
         </div>
@@ -364,11 +559,17 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setDataSource(dataSource === 'database' ? 'live' : 'database')}
+            onClick={() =>
+              setDataSource(dataSource === "database" ? "live" : "database")
+            }
             className="flex items-center gap-1"
           >
-            {dataSource === 'database' ? <Cloud className="w-3 h-3" /> : <Database className="w-3 h-3" />}
-            Switch to {dataSource === 'database' ? 'Live' : 'Database'}
+            {dataSource === "database" ? (
+              <Cloud className="w-3 h-3" />
+            ) : (
+              <Database className="w-3 h-3" />
+            )}
+            Switch to {dataSource === "database" ? "Live" : "Database"}
           </Button>
           {projectId && (
             <Button
@@ -378,8 +579,10 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
               disabled={syncing}
               className="flex items-center gap-1"
             >
-              <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing...' : 'Sync from Azure'}
+              <RefreshCw
+                className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`}
+              />
+              {syncing ? "Syncing..." : "Sync from Azure"}
             </Button>
           )}
         </div>
@@ -407,8 +610,8 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
             <SelectItem value="Feature">Features</SelectItem>
           </SelectContent>
         </Select>
-        <Button 
-          variant={showHierarchy ? "default" : "outline"} 
+        <Button
+          variant={showHierarchy ? "default" : "outline"}
           onClick={() => setShowHierarchy(!showHierarchy)}
           className="flex items-center gap-2"
         >
@@ -423,22 +626,7 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
       </div>
 
       <div className="grid gap-4">
-        {organizedWorkItems.map((item) => (
-          <div key={item.id}>
-            {showHierarchy && item.hasChildren ? (
-              <Collapsible open={expandedItems.has(item.id)} onOpenChange={() => toggleExpanded(item.id)}>
-                {renderWorkItem(item)}
-                <CollapsibleContent className="space-y-2 mt-2">
-                  {getChildWorkItems(item.id).map((childItem) => 
-                    renderWorkItem(childItem, true)
-                  )}
-                </CollapsibleContent>
-              </Collapsible>
-            ) : (
-              renderWorkItem(item)
-            )}
-          </div>
-        ))}
+        {organizedWorkItems.map((item) => renderWorkItemTree(item))}
       </div>
 
       {organizedWorkItems.length === 0 && (
@@ -458,4 +646,4 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
       )}
     </div>
   );
-} 
+}

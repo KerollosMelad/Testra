@@ -21,10 +21,13 @@ export type Database = {
           last_sync: string | null
           max_tokens: number
           name: string
+          open_ai_key: string | null
+          openai_api_key: string | null
           organization: string
           project: string
           temperature: number
           token: string
+          work_item_types: string[] | null
         }
         Insert: {
           ai_chat: boolean
@@ -37,10 +40,13 @@ export type Database = {
           last_sync?: string | null
           max_tokens: number
           name: string
+          open_ai_key?: string | null
+          openai_api_key?: string | null
           organization: string
           project: string
           temperature: number
           token: string
+          work_item_types?: string[] | null
         }
         Update: {
           ai_chat?: boolean
@@ -53,10 +59,13 @@ export type Database = {
           last_sync?: string | null
           max_tokens?: number
           name?: string
+          open_ai_key?: string | null
+          openai_api_key?: string | null
           organization?: string
           project?: string
           temperature?: number
           token?: string
+          work_item_types?: string[] | null
         }
         Relationships: []
       }
