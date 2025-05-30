@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
     // Format work item types for the WIQL query
     const formattedWorkItemTypes = workItemTypesArray
-      .map((type) => `'${type}'`)
+      .map((type: string) => `'${type}'`)
       .join(", ");
 
     // WIQL query to get selected work item types with relationships
