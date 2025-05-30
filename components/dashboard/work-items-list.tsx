@@ -229,27 +229,8 @@ export function WorkItemsList({
 
   // Build tree structure for hierarchy view
   const buildTreeStructure = (items: WorkItem[]) => {
-    console.log("🔍 DEBUG: All work items:", items);
     
     // Check what parent-child relationships exist
-    const itemsWithParents = items.filter(item => item.parentId);
-    const itemsWithChildren = items.filter(item => item.hasChildren);
-    
-    console.log("📊 DEBUG: Items with parentId:", itemsWithParents.map(item => ({
-      id: item.id,
-      title: item.title,
-      parentId: item.parentId,
-      workItemType: item.workItemType
-    })));
-    
-    console.log("👨‍👩‍👧‍👦 DEBUG: Items with children flag:", itemsWithChildren.map(item => ({
-      id: item.id,
-      title: item.title,
-      hasChildren: item.hasChildren,
-      childrenArray: item.children,
-      workItemType: item.workItemType
-    })));
-
     const itemMap = new Map<string, WorkItem & { computedChildren: WorkItem[] }>();
     const rootItems: (WorkItem & { computedChildren: WorkItem[] })[] = [];
 
@@ -266,21 +247,11 @@ export function WorkItemsList({
       if (item.parentId && itemMap.has(item.parentId)) {
         const parent = itemMap.get(item.parentId)!;
         parent.computedChildren.push(currentItem);
-        console.log(`🔗 DEBUG: Added child ${item.id} (${item.title}) to parent ${item.parentId}`);
       } else {
         // No parent, so it's a root item
         rootItems.push(currentItem);
-        console.log(`🌳 DEBUG: Added root item ${item.id} (${item.title})`);
       }
     });
-
-    console.log("🏗️ DEBUG: Final tree structure:", rootItems.map(item => ({
-      id: item.id,
-      title: item.title,
-      computedChildrenCount: item.computedChildren.length,
-      computedChildren: item.computedChildren.map(child => ({ id: child.id, title: child.title }))
-    })));
-
     return rootItems;
   };
 
