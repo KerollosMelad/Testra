@@ -147,6 +147,11 @@ export async function GET(request: NextRequest) {
           });
         }
 
+        // Also check the direct System.Parent field
+        if (!parentId && item.fields["System.Parent"]) {
+          parentId = item.fields["System.Parent"].toString();
+        }
+
         const workItemType = item.fields["System.WorkItemType"] || "";
 
         return {
@@ -183,6 +188,30 @@ export async function GET(request: NextRequest) {
           hasParent: !!parentId,
         };
       }) || [];
+
+    // Second pass: populate children arrays based on parentId relationships
+    const workItemsMap = new Map(workItems.map(item => [item.id, item]));
+    
+    workItems.forEach(item => {
+      if (item.parentId && workItemsMap.has(item.parentId)) {
+        const parent = workItemsMap.get(item.parentId)!;
+        
+        // Add this item as a child to its parent if not already added
+        if (!parent.children.find(child => child.id === item.id)) {
+          parent.children.push({
+            id: item.id,
+            relationType: "child",
+            workItemId: item.id,
+            title: item.title,
+            workItemType: item.workItemType,
+            state: item.state,
+          });
+          
+          // Update hasChildren flag
+          parent.hasChildren = parent.children.length > 0;
+        }
+      }
+    });
 
     return NextResponse.json({
       workItems,

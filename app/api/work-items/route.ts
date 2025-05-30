@@ -1,6 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 
+interface WorkItemRelation {
+  parent_work_item_id: string;
+  child_work_item_id: string;
+  relation_type: string;
+  parent_work_item?: {
+    azure_id: string;
+    title: string;
+    work_item_type: string;
+    state: string;
+  }[];
+  child_work_item?: {
+    azure_id: string;
+    title: string;
+    work_item_type: string;
+    state: string;
+  }[];
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -13,33 +31,7 @@ export async function GET(request: NextRequest) {
     // Fetch work items from database
     const { data: workItems, error: workItemsError } = await supabaseAdmin
       .from('work_items')
-      .select(`
-        *,
-        parent_relations:work_item_relations!parent_work_item_id(
-          id,
-          child_work_item_id,
-          relation_type,
-          child_work_item:work_items!child_work_item_id(
-            id,
-            azure_id,
-            title,
-            work_item_type,
-            state
-          )
-        ),
-        child_relations:work_item_relations!child_work_item_id(
-          id,
-          parent_work_item_id,
-          relation_type,
-          parent_work_item:work_items!parent_work_item_id(
-            id,
-            azure_id,
-            title,
-            work_item_type,
-            state
-          )
-        )
-      `)
+      .select('*')
       .eq('project_id', projectId)
       .order('changed_date', { ascending: false });
 
@@ -48,27 +40,71 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch work items' }, { status: 500 });
     }
 
+    // Fetch work item relations to build parent-child relationships
+    const workItemIds = workItems?.map(item => item.id) || [];
+    let relations: WorkItemRelation[] = [];
+    
+    if (workItemIds.length > 0) {
+      // Query for relations with both parent and child work items
+      const { data: relationData, error: relationsError } = await supabaseAdmin
+        .from('work_item_relations')
+        .select(`
+          parent_work_item_id,
+          child_work_item_id,
+          relation_type,
+          parent_work_item:work_items!work_item_relations_parent_work_item_id_fkey(
+            id,
+            azure_id,
+            title,
+            work_item_type,
+            state
+          ),
+          child_work_item:work_items!work_item_relations_child_work_item_id_fkey(
+            id,
+            azure_id,
+            title,
+            work_item_type,
+            state
+          )
+        `)
+        .or(`parent_work_item_id.in.(${workItemIds.join(',')}),child_work_item_id.in.(${workItemIds.join(',')})`)
+        .eq('relation_type', 'parent');
+      
+      if (relationsError) {
+        console.error('Error fetching relations:', relationsError);
+      }
+      
+      relations = relationData || [];
+    }
+
     // Transform the data to match the expected interface
     const transformedWorkItems = workItems?.map((item: any) => {
-      const children = item.parent_relations?.map((rel: any) => ({
-        id: rel.child_work_item.azure_id,
-        relationType: rel.relation_type,
-        workItemId: rel.child_work_item.azure_id,
-        title: rel.child_work_item.title,
-        workItemType: rel.child_work_item.work_item_type,
-        state: rel.child_work_item.state,
-      })) || [];
+      // Get children where this item is the parent
+      const children = relations
+        .filter((rel) => rel.parent_work_item_id === item.id)
+        .map((rel) => {
+          const childWorkItem = Array.isArray(rel.child_work_item) ? rel.child_work_item[0] : rel.child_work_item;
+          return {
+            id: childWorkItem?.azure_id || '',
+            relationType: rel.relation_type,
+            workItemId: childWorkItem?.azure_id || '',
+            title: childWorkItem?.title || '',
+            workItemType: childWorkItem?.work_item_type || '',
+            state: childWorkItem?.state || '',
+          };
+        });
 
-      const relatedItems = item.child_relations?.map((rel: any) => ({
-        id: rel.parent_work_item.azure_id,
-        relationType: rel.relation_type,
-        workItemId: rel.parent_work_item.azure_id,
-        title: rel.parent_work_item.title,
-        workItemType: rel.parent_work_item.work_item_type,
-        state: rel.parent_work_item.state,
-      })) || [];
-
-      const parentId = item.child_relations?.find((rel: any) => rel.relation_type === 'parent')?.parent_work_item?.azure_id;
+      // Get parent where this item is the child
+      const parentRelation = relations
+        .find((rel) => rel.child_work_item_id === item.id);
+      
+      let parentId: string | null = null;
+      if (parentRelation) {
+        const parentWorkItem = Array.isArray(parentRelation.parent_work_item) 
+          ? parentRelation.parent_work_item[0] 
+          : parentRelation.parent_work_item;
+        parentId = parentWorkItem?.azure_id || null;
+      }
 
       return {
         id: item.azure_id,
@@ -86,7 +122,7 @@ export async function GET(request: NextRequest) {
         // Enhanced relationship data
         parentId,
         children,
-        relatedItems,
+        relatedItems: [], // We'll focus on parent-child relationships for now
         // Computed fields
         isUserStory: item.work_item_type === 'User Story',
         isTask: item.work_item_type === 'Task',
