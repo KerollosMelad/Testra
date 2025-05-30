@@ -1,12 +1,20 @@
-import { openai, OpenAITestGenerationRequest, OpenAITestGenerationResponse } from './openai';
+import { createOpenAIClient, OpenAITestGenerationRequest, OpenAITestGenerationResponse } from './openai';
 import { WorkItem, TestCase, TestGenerationContext, TestGenerationResult } from './types';
+import OpenAI from 'openai';
 
 export class AITestGenerator {
   private model: string;
   private temperature: number;
   private maxTokens: number;
+  private openai: OpenAI;
 
-  constructor(model: string = 'gpt-4', temperature: number = 0.7, maxTokens: number = 2000) {
+  constructor(
+    apiKey: string,
+    model: string = 'gpt-4', 
+    temperature: number = 0.7, 
+    maxTokens: number = 2000
+  ) {
+    this.openai = createOpenAIClient(apiKey);
     this.model = model;
     this.temperature = temperature;
     this.maxTokens = maxTokens;
@@ -55,13 +63,13 @@ export class AITestGenerator {
 
       let completion;
       try {
-        completion = await openai.chat.completions.create(completionParams);
+        completion = await this.openai.chat.completions.create(completionParams);
       } catch (formatError: any) {
         // If the error is about response_format, retry without it
         if (formatError.message?.includes('response_format')) {
           console.log('JSON format not supported, retrying without response_format');
           delete completionParams.response_format;
-          completion = await openai.chat.completions.create(completionParams);
+          completion = await this.openai.chat.completions.create(completionParams);
         } else {
           throw formatError;
         }
@@ -276,7 +284,7 @@ Focus on quality over quantity. Each test case should be clear, actionable, and 
 
 Please generate clean, well-commented, and executable test code that follows best practices for ${framework} and ${language}.`;
 
-      const completion = await openai.chat.completions.create({
+      const completion = await this.openai.chat.completions.create({
         model: this.model,
         messages: [
           {
@@ -302,9 +310,10 @@ Please generate clean, well-commented, and executable test code that follows bes
 
 // Factory function to create AI test generator with project settings
 export function createAITestGenerator(
+  apiKey: string,
   model: string = 'gpt-4',
   temperature: number = 0.7,
   maxTokens: number = 2000
 ): AITestGenerator {
-  return new AITestGenerator(model, temperature, maxTokens);
+  return new AITestGenerator(apiKey, model, temperature, maxTokens);
 } 

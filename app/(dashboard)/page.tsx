@@ -1,30 +1,57 @@
-import { ProjectCard } from "@/components/dashboard/project-card"
-import { StatsOverview } from "@/components/dashboard/stats-overview"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import Link from "next/link"
-import { prisma } from "@/lib/prisma"
-import { getProjectStats } from "@/lib/azure-devops"
+import { ProjectCard } from "@/components/dashboard/project-card";
+import { StatsOverview } from "@/components/dashboard/stats-overview";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import Link from "next/link";
+import { supabaseAdmin } from "@/lib/supabase";
+import { getProjectStats } from "@/lib/azure-devops";
 
 export default async function DashboardPage() {
   // Fetch real projects from database
-  const projects = await prisma.project.findMany({
-    orderBy: {
-      createdAt: 'desc'
-    },
-    take: 3 // Limit to 3 projects for dashboard view
-  })
+  const { data: projectsData } = await supabaseAdmin
+    .from("projects")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(3); // Limit to 3 projects for dashboard view
+
+  // Transform the snake_case fields back to camelCase
+  const projects = (projectsData || []).map((project: any) => ({
+    id: project.id,
+    name: project.name,
+    description: project.description,
+    organization: project.organization,
+    project: project.project,
+    token: project.token,
+    openaiApiKey: project.openai_api_key,
+    aiModel: project.ai_model,
+    temperature: project.temperature,
+    maxTokens: project.max_tokens,
+    autoGeneration: project.auto_generation,
+    aiChat: project.ai_chat,
+    codeGeneration: project.code_generation,
+    createdAt: new Date(project.created_at),
+    lastSync: project.last_sync ? new Date(project.last_sync) : undefined,
+  }));
+
+  // Type for the transformed project
+  type TransformedProject = typeof projects[0];
 
   // Fetch stats for each project with error handling
   const projectsWithStats = await Promise.allSettled(
-    projects.map(async (project) => {
+    projects.map(async (project: TransformedProject) => {
       try {
         const stats = await getProjectStats(
           project.organization,
           project.project,
-          project.token
+          project.token,
         );
-        
+
         return {
           id: project.id,
           name: project.name,
@@ -52,15 +79,15 @@ export default async function DashboardPage() {
           lastSync: project.lastSync || project.createdAt,
           createdAt: project.createdAt,
           isConnected: false,
-          error: `Failed to fetch project stats: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          error: `Failed to fetch project stats: ${error instanceof Error ? error.message : "Unknown error"}`,
         };
       }
-    })
+    }),
   );
 
   // Extract successful results and handle failures gracefully
   const validProjects = projectsWithStats.map((result, index) => {
-    if (result.status === 'fulfilled') {
+    if (result.status === "fulfilled") {
       return result.value;
     } else {
       // Return project with default stats
@@ -87,8 +114,12 @@ export default async function DashboardPage() {
       {/* Welcome Section */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Welcome to Testra</h1>
-          <p className="text-gray-600 mt-1">Manage your test automation projects and AI-generated test cases</p>
+          <h1 className="text-3xl font-bold text-gray-900">
+            Welcome to Testra
+          </h1>
+          <p className="text-gray-600 mt-1">
+            Manage your test automation projects and AI-generated test cases
+          </p>
         </div>
       </div>
 
@@ -99,26 +130,40 @@ export default async function DashboardPage() {
       <Card>
         <CardHeader>
           <CardTitle>Recent Activity</CardTitle>
-          <CardDescription>Latest test generation and project updates</CardDescription>
+          <CardDescription>
+            Latest test generation and project updates
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
             <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
               <div>
-                <p className="font-medium text-sm">Generated 12 test cases for "User Authentication"</p>
-                <p className="text-xs text-gray-500">E-Commerce Platform • 2 hours ago</p>
+                <p className="font-medium text-sm">
+                  Generated 12 test cases for "User Authentication"
+                </p>
+                <p className="text-xs text-gray-500">
+                  E-Commerce Platform • 2 hours ago
+                </p>
               </div>
             </div>
             <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
               <div>
-                <p className="font-medium text-sm">Synced 8 new user stories from Azure DevOps</p>
-                <p className="text-xs text-gray-500">Mobile App API • 4 hours ago</p>
+                <p className="font-medium text-sm">
+                  Synced 8 new user stories from Azure DevOps
+                </p>
+                <p className="text-xs text-gray-500">
+                  Mobile App API • 4 hours ago
+                </p>
               </div>
             </div>
             <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
               <div>
-                <p className="font-medium text-sm">Generated Cypress automation code</p>
-                <p className="text-xs text-gray-500">Admin Dashboard • 1 day ago</p>
+                <p className="font-medium text-sm">
+                  Generated Cypress automation code
+                </p>
+                <p className="text-xs text-gray-500">
+                  Admin Dashboard • 1 day ago
+                </p>
               </div>
             </div>
           </div>
@@ -137,29 +182,26 @@ export default async function DashboardPage() {
             </Link>
           )}
         </div>
-        
+
         {projects.length === 0 ? (
           <Card className="text-center py-8">
             <CardContent>
-              <p className="text-gray-500 mb-4">No projects yet. Create your first project to get started!</p>
+              <p className="text-gray-500 mb-4">
+                No projects yet. Create your first project to get started!
+              </p>
               <Link href="/projects/new">
-                <Button>
-                  Create Project
-                </Button>
+                <Button>Create Project</Button>
               </Link>
             </CardContent>
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {validProjects.map((project) => (
-              <ProjectCard 
-                key={project.id} 
-                project={project}
-              />
+              <ProjectCard key={project.id} project={project} />
             ))}
           </div>
         )}
       </div>
     </div>
-  )
+  );
 }

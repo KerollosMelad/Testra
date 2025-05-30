@@ -3,6 +3,8 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-}
+  // Increase stability for production builds
+  reactStrictMode: true,
+};
 
-export default nextConfig
+export default nextConfig;

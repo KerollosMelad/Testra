@@ -1,11 +1,28 @@
 import OpenAI from 'openai';
 
-// Initialize OpenAI client
+// Create OpenAI client with provided API key
+export function createOpenAIClient(apiKey: string): OpenAI {
+  return new OpenAI({
+    apiKey: apiKey,
+  });
+}
+
+// Initialize default OpenAI client (for backward compatibility)
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY || '',
 });
 
 export { openai };
+
+// Check if global OpenAI is configured (for backward compatibility)
+export function isOpenAIConfigured(): boolean {
+  return Boolean(process.env.OPENAI_API_KEY);
+}
+
+// Check if project-specific OpenAI is configured
+export function isProjectOpenAIConfigured(apiKey: string): boolean {
+  return Boolean(apiKey && apiKey.startsWith('sk-'));
+}
 
 // Types for OpenAI responses
 export interface OpenAITestGenerationRequest {
@@ -45,11 +62,6 @@ export interface OpenAITestGenerationResponse {
   }>;
   suggestions: string[];
   confidence: number;
-}
-
-// Helper function to check if OpenAI is configured
-export function isOpenAIConfigured(): boolean {
-  return !!process.env.OPENAI_API_KEY;
 }
 
 // Helper function to get available models

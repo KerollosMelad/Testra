@@ -1,6 +1,7 @@
-import type React from "react"
+import React from "react"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Navbar } from "@/components/layout/navbar"
+import { Toaster } from "@/components/ui/sonner"
 
 export default function DashboardLayout({
   children,
@@ -14,6 +15,7 @@ export default function DashboardLayout({
         <Navbar />
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
+      <Toaster />
     </div>
   )
 }

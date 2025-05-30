@@ -5,6 +5,7 @@ export interface Project {
   organization: string
   project: string
   token: string
+  openaiApiKey: string
   aiModel: 'gpt-4' | 'gpt-3.5-turbo'
   temperature: number
   maxTokens: number
@@ -36,6 +37,7 @@ export interface WorkItem {
   tags: string[]
   createdDate: string | null
   changedDate: string | null
+  lastSyncAt?: string | null
   projectId?: string
   parentId?: string
   children: WorkItemRelation[]

@@ -5,10 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, User, Calendar, Tag, Sparkles, GitBranch, ArrowRight, Users, ChevronDown, ChevronRight } from "lucide-react";
+import { Search, User, Calendar, Tag, Sparkles, GitBranch, ArrowRight, Users, ChevronDown, ChevronRight, RefreshCw, Database, Cloud, CheckCircle } from "lucide-react";
 import { WorkItem } from "@/lib/types";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { TestGenerationDialog } from "@/components/test-generation/test-generation-dialog";
+import { toast } from "sonner";
 
 interface WorkItemsListProps {
   organization: string;
@@ -33,45 +34,107 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [summary, setSummary] = useState<WorkItemsResponse['summary'] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showHierarchy, setShowHierarchy] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [dataSource, setDataSource] = useState<'database' | 'live'>('database');
   
   // Test generation dialog state
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItem | null>(null);
 
   useEffect(() => {
-    async function fetchWorkItems() {
-      setLoading(true);
-      setError(null);
-      try {
+    fetchWorkItems();
+  }, [organization, project, token, projectId, dataSource]);
+
+  async function fetchWorkItems() {
+    setLoading(true);
+    setError(null);
+    try {
+      let data: WorkItemsResponse;
+      
+      if (dataSource === 'database' && projectId) {
+        // Try to fetch from database first
+        const params = new URLSearchParams({ projectId });
+        const res = await fetch(`/api/work-items?${params}`);
+        
+        if (res.ok) {
+          data = await res.json();
+          // If no work items in database, fall back to live data
+          if (data.workItems.length === 0) {
+            setDataSource('live');
+            return; // This will trigger useEffect again with live data
+          }
+        } else {
+          throw new Error('Failed to fetch work items from database');
+        }
+      } else {
+        // Fetch from Azure DevOps directly
         const params = new URLSearchParams({
           organization,
           project,
           pat: token,
         });
         const res = await fetch(`/api/azure/work-items?${params}`);
-        if (!res.ok) throw new Error('Failed to fetch work items');
-        const data: WorkItemsResponse = await res.json();
-        setWorkItems(data.workItems || []);
-        setSummary(data.summary);
-        
-        // Auto-expand user stories that have children
-        const userStoriesWithChildren = data.workItems
-          .filter(item => item.isUserStory && item.hasChildren)
-          .map(item => item.id);
-        setExpandedItems(new Set(userStoriesWithChildren));
-      } catch (err: any) {
-        setError(err.message || 'Failed to fetch work items');
-      } finally {
-        setLoading(false);
+        if (!res.ok) throw new Error('Failed to fetch work items from Azure DevOps');
+        data = await res.json();
       }
+      
+      setWorkItems(data.workItems || []);
+      setSummary(data.summary);
+      
+      // Auto-expand user stories that have children
+      const userStoriesWithChildren = data.workItems
+        .filter(item => item.isUserStory && item.hasChildren)
+        .map(item => item.id);
+      setExpandedItems(new Set(userStoriesWithChildren));
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch work items');
+    } finally {
+      setLoading(false);
     }
-    fetchWorkItems();
-  }, [organization, project, token]);
+  }
+
+  async function syncWorkItems() {
+    if (!projectId) {
+      toast.error('Project ID is required for syncing');
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const response = await fetch('/api/azure/work-items/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId,
+          organization,
+          project,
+          pat: token,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to sync work items');
+      }
+
+      const result = await response.json();
+      toast.success(`Sync completed: ${result.synced} new, ${result.updated} updated`);
+      
+      // Switch to database view and refresh
+      setDataSource('database');
+      fetchWorkItems();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to sync work items');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const toggleExpanded = (itemId: string) => {
     const newExpanded = new Set(expandedItems);
@@ -279,6 +342,48 @@ export function WorkItemsList({ organization, project, token, projectId }: WorkI
           </Card>
         </div>
       )}
+
+      {/* Data Source and Sync Controls */}
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between p-4 bg-gray-50 rounded-lg">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">Data Source:</span>
+            <Badge variant={dataSource === 'database' ? 'default' : 'secondary'} className="flex items-center gap-1">
+              {dataSource === 'database' ? <Database className="w-3 h-3" /> : <Cloud className="w-3 h-3" />}
+              {dataSource === 'database' ? 'Database' : 'Live (Azure DevOps)'}
+            </Badge>
+          </div>
+          {dataSource === 'database' && workItems.length > 0 && (
+            <div className="flex items-center gap-1 text-sm text-gray-600">
+              <CheckCircle className="w-3 h-3 text-green-600" />
+              Last synced: {workItems[0]?.lastSyncAt ? new Date(workItems[0].lastSyncAt).toLocaleString() : 'Unknown'}
+            </div>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setDataSource(dataSource === 'database' ? 'live' : 'database')}
+            className="flex items-center gap-1"
+          >
+            {dataSource === 'database' ? <Cloud className="w-3 h-3" /> : <Database className="w-3 h-3" />}
+            Switch to {dataSource === 'database' ? 'Live' : 'Database'}
+          </Button>
+          {projectId && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={syncWorkItems}
+              disabled={syncing}
+              className="flex items-center gap-1"
+            >
+              <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? 'Syncing...' : 'Sync from Azure'}
+            </Button>
+          )}
+        </div>
+      </div>
 
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
