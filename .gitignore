@@ -7,6 +7,8 @@
 # next.js
 /.next/
 /out/
+/.vscode/
+/.cursor/
 
 # production
 /build

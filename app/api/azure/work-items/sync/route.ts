@@ -12,7 +12,38 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Fetch work items from Azure DevOps (reusing the existing logic)
+    // First, fetch the project configuration to get work item types
+    const { data: projectConfig, error: projectError } = await supabaseAdmin
+      .from('projects')
+      .select('work_item_types')
+      .eq('id', projectId)
+      .single();
+
+    if (projectError) {
+      return NextResponse.json({ 
+        error: 'Failed to fetch project configuration' 
+      }, { status: 500 });
+    }
+
+    const workItemTypes = projectConfig.work_item_types || ['User Story', 'Task', 'Bug', 'Feature'];
+    const workItemTypesString = workItemTypes.map((type: string) => `'${type}'`).join(', ');
+
+    // Delete existing work items that are no longer in the selected types
+    const { data: deletedItems, error: deleteError } = await supabaseAdmin
+      .from('work_items')
+      .delete()
+      .eq('project_id', projectId)
+      .not('work_item_type', 'in', `(${workItemTypesString.replace(/'/g, '')})`)
+      .select('azure_id');
+
+    const deletedCount = deletedItems?.length || 0;
+
+    if (deleteError) {
+      console.error('Error deleting work items:', deleteError);
+      // Continue with sync even if deletion fails
+    }
+
+    // Fetch work items from Azure DevOps with the configured types
     const wiqlQuery = {
       query: `
         SELECT [System.Id], [System.Title], [System.Description], [System.WorkItemType], 
@@ -21,7 +52,7 @@ export async function POST(request: NextRequest) {
                [System.CreatedDate], [System.ChangedDate], [System.Parent]
         FROM WorkItems 
         WHERE [System.TeamProject] = '${project}' 
-        AND [System.WorkItemType] IN ('User Story', 'Task', 'Bug', 'Feature')
+        AND [System.WorkItemType] IN (${workItemTypesString})
         ORDER BY [System.ChangedDate] DESC
       `
     };
@@ -105,16 +136,35 @@ export async function POST(request: NextRequest) {
       // Check if work item already exists
       const { data: existingWorkItem } = await supabaseAdmin
         .from('work_items')
-        .select('id, azure_id, changed_date')
+        .select('id, azure_id, title, description, work_item_type, state, assigned_to, priority, acceptance_criteria, tags, changed_date')
         .eq('azure_id', azureId)
         .single();
 
       if (existingWorkItem) {
-        // Update existing work item if it has changed
+        // Check if anything has actually changed by comparing key fields
         const existingChangedDate = new Date(existingWorkItem.changed_date || 0);
         const newChangedDate = new Date(workItemData.changed_date || 0);
         
-        if (newChangedDate > existingChangedDate) {
+        const hasFieldChanges = 
+          existingWorkItem.title !== workItemData.title ||
+          existingWorkItem.description !== workItemData.description ||
+          existingWorkItem.work_item_type !== workItemData.work_item_type ||
+          existingWorkItem.state !== workItemData.state ||
+          existingWorkItem.assigned_to !== workItemData.assigned_to ||
+          existingWorkItem.priority !== workItemData.priority ||
+          existingWorkItem.acceptance_criteria !== workItemData.acceptance_criteria ||
+          JSON.stringify(existingWorkItem.tags) !== JSON.stringify(workItemData.tags);
+
+        // Update if the changed date is newer OR if any fields have changed
+        if (newChangedDate > existingChangedDate || hasFieldChanges) {
+          console.log(`Updating work item ${azureId}: ${workItemData.title}`);
+          if (hasFieldChanges) {
+            console.log(`  - Field changes detected for work item ${azureId}`);
+          }
+          if (newChangedDate > existingChangedDate) {
+            console.log(`  - Changed date updated: ${existingWorkItem.changed_date} -> ${workItemData.changed_date}`);
+          }
+          
           await supabaseAdmin
             .from('work_items')
             .update(workItemData)
@@ -123,6 +173,7 @@ export async function POST(request: NextRequest) {
         }
       } else {
         // Insert new work item
+        console.log(`Adding new work item ${azureId}: ${workItemData.title}`);
         await supabaseAdmin
           .from('work_items')
           .insert(workItemData);
@@ -199,7 +250,8 @@ export async function POST(request: NextRequest) {
       synced: syncedCount,
       updated: updatedCount,
       totalProcessed: syncedCount + updatedCount,
-      relationsProcessed: workItemRelations.length
+      relationsProcessed: workItemRelations.length,
+      deleted: deletedCount
     });
 
   } catch (error) {
