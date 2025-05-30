@@ -17,6 +17,7 @@ const schema = z.object({
   organization: z.string().min(1, "Organization is required"),
   project: z.string().min(1, "Project is required"),
   pat: z.string().min(1, "Personal Access Token is required"),
+  openaiApiKey: z.string().min(1, "OpenAI API Key is required"),
   aiModel: z.enum(["gpt-4", "gpt-3.5-turbo"]),
   temperature: z.coerce.number().min(0).max(2),
   maxTokens: z.coerce.number().min(1),
@@ -36,6 +37,7 @@ export default function NewProjectPage() {
       organization: "",
       project: "",
       pat: "",
+      openaiApiKey: "",
       aiModel: "gpt-4",
       temperature: 0.7,
       maxTokens: 1024,
@@ -88,6 +90,7 @@ export default function NewProjectPage() {
           organization: values.organization,
           project: values.project,
           token: values.pat,
+          openaiApiKey: values.openaiApiKey,
           aiModel: values.aiModel,
           temperature: values.temperature,
           maxTokens: values.maxTokens,
@@ -208,6 +211,34 @@ export default function NewProjectPage() {
           {/* AI Configuration */}
           <div className="space-y-4">
             <h3 className="text-lg font-medium">AI Configuration</h3>
+            <FormField
+              control={form.control}
+              name="openaiApiKey"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>OpenAI API Key</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="password" 
+                      placeholder="sk-..." 
+                      {...field} 
+                    />
+                  </FormControl>
+                  <div className="text-sm text-gray-500">
+                    Get your API key from{" "}
+                    <a 
+                      href="https://platform.openai.com/api-keys" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline"
+                    >
+                      OpenAI Dashboard
+                    </a>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <FormField
                 control={form.control}
