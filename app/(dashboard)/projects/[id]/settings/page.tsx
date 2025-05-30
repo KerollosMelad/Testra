@@ -67,9 +67,9 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 interface ProjectSettingsPageProps {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 export default function ProjectSettingsPage({
