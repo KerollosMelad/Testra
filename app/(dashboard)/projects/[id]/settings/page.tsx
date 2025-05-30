@@ -66,15 +66,7 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-interface ProjectSettingsPageProps {
-  params: Promise<{
-    id: string;
-  }>;
-}
-
-export default function ProjectSettingsPage({
-  params,
-}: ProjectSettingsPageProps) {
+export default function ProjectSettingsPage() {
   // Use the useParams hook to get the id parameter from the URL
   const routeParams = useParams();
   const id = routeParams?.id as string;
