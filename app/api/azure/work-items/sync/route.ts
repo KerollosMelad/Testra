@@ -115,6 +115,40 @@ export async function POST(request: NextRequest) {
     // Process each work item
     for (const item of batchResult.value || []) {
       const azureId = item.id.toString();
+      
+      // Process relations - check for direct parent field first
+      if (item.fields['System.Parent']) {
+        const parentAzureId = item.fields['System.Parent'].toString();
+        workItemRelations.push({
+          parentAzureId,
+          childAzureId: azureId,
+          relationType: 'parent'
+        });
+      }
+      
+      // Also process relations array if present
+      if (item.relations) {
+        for (const relation of item.relations) {
+          const relatedWorkItemId = extractWorkItemId(relation.url);
+          
+          if (relatedWorkItemId && workItemIds.includes(parseInt(relatedWorkItemId))) {
+            if (relation.rel.includes('Parent')) {
+              workItemRelations.push({
+                parentAzureId: relatedWorkItemId,
+                childAzureId: azureId,
+                relationType: 'parent'
+              });
+            } else if (relation.rel.includes('Child')) {
+              workItemRelations.push({
+                parentAzureId: azureId,
+                childAzureId: relatedWorkItemId,
+                relationType: 'parent'
+              });
+            }
+          }
+        }
+      }
+
       const workItemData = {
         azure_id: azureId,
         title: item.fields['System.Title'] || '',
@@ -141,7 +175,7 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (existingWorkItem) {
-        // Check if anything has actually changed by comparing key fields
+        // Check if anything has actually changed
         const existingChangedDate = new Date(existingWorkItem.changed_date || 0);
         const newChangedDate = new Date(workItemData.changed_date || 0);
         
@@ -157,14 +191,6 @@ export async function POST(request: NextRequest) {
 
         // Update if the changed date is newer OR if any fields have changed
         if (newChangedDate > existingChangedDate || hasFieldChanges) {
-          console.log(`Updating work item ${azureId}: ${workItemData.title}`);
-          if (hasFieldChanges) {
-            console.log(`  - Field changes detected for work item ${azureId}`);
-          }
-          if (newChangedDate > existingChangedDate) {
-            console.log(`  - Changed date updated: ${existingWorkItem.changed_date} -> ${workItemData.changed_date}`);
-          }
-          
           await supabaseAdmin
             .from('work_items')
             .update(workItemData)
@@ -173,69 +199,48 @@ export async function POST(request: NextRequest) {
         }
       } else {
         // Insert new work item
-        console.log(`Adding new work item ${azureId}: ${workItemData.title}`);
         await supabaseAdmin
           .from('work_items')
           .insert(workItemData);
         syncedCount++;
       }
-
-      // Process relations
-      if (item.relations) {
-        for (const relation of item.relations) {
-          const relatedWorkItemId = extractWorkItemId(relation.url);
-          if (relatedWorkItemId && workItemIds.includes(parseInt(relatedWorkItemId))) {
-            const relationType = relation.rel.includes('Parent') ? 'parent' :
-                               relation.rel.includes('Child') ? 'child' :
-                               relation.rel.includes('Predecessor') ? 'predecessor' :
-                               relation.rel.includes('Successor') ? 'successor' : 'related';
-
-            if (relationType === 'child') {
-              workItemRelations.push({
-                parentAzureId: azureId,
-                childAzureId: relatedWorkItemId,
-                relationType: 'parent'
-              });
-            }
-          }
-        }
-      }
     }
+
+    // Clear existing relations for these work items to avoid duplicates
+    const { data: existingWorkItems } = await supabaseAdmin
+      .from('work_items')
+      .select('id, azure_id')
+      .in('azure_id', workItemIds.map(String));
+
+    if (existingWorkItems && existingWorkItems.length > 0) {
+      const existingIds = existingWorkItems.map(item => item.id);
+      await supabaseAdmin
+        .from('work_item_relations')
+        .delete()
+        .or(`parent_work_item_id.in.(${existingIds.join(',')}),child_work_item_id.in.(${existingIds.join(',')})`)
+        .eq('relation_type', 'parent');
+    }
+
+    // Create a map of azure_id to internal id for efficient lookups
+    const workItemIdMap = new Map(
+      existingWorkItems?.map(item => [item.azure_id, item.id]) || []
+    );
 
     // Sync work item relations
     for (const relation of workItemRelations) {
-      // Get the internal IDs for the work items
-      const { data: parentWorkItem } = await supabaseAdmin
-        .from('work_items')
-        .select('id')
-        .eq('azure_id', relation.parentAzureId)
-        .single();
+      const parentId = workItemIdMap.get(relation.parentAzureId);
+      const childId = workItemIdMap.get(relation.childAzureId);
 
-      const { data: childWorkItem } = await supabaseAdmin
-        .from('work_items')
-        .select('id')
-        .eq('azure_id', relation.childAzureId)
-        .single();
-
-      if (parentWorkItem && childWorkItem) {
-        // Check if relation already exists
-        const { data: existingRelation } = await supabaseAdmin
+      if (parentId && childId) {
+        await supabaseAdmin
           .from('work_item_relations')
-          .select('id')
-          .eq('parent_work_item_id', parentWorkItem.id)
-          .eq('child_work_item_id', childWorkItem.id)
-          .eq('relation_type', relation.relationType)
-          .single();
-
-        if (!existingRelation) {
-          await supabaseAdmin
-            .from('work_item_relations')
-            .insert({
-              parent_work_item_id: parentWorkItem.id,
-              child_work_item_id: childWorkItem.id,
-              relation_type: relation.relationType,
-            });
-        }
+          .upsert({
+            parent_work_item_id: parentId,
+            child_work_item_id: childId,
+            relation_type: relation.relationType,
+          }, {
+            onConflict: 'parent_work_item_id,child_work_item_id,relation_type'
+          });
       }
     }
 
