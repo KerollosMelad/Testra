@@ -137,11 +137,15 @@ export class AITestGenerator {
   }
 
   private convertToTestCase(item: any): TestCase {
+    // Ensure type is one of the allowed values, default to 'integration' for unsupported types
+    const allowedTypes = ['unit', 'integration'] as const;
+    const itemType = allowedTypes.includes(item.type) ? item.type : 'integration';
+    
     return {
       id: item.id,
       title: item.title,
       description: item.description || '',
-      type: item.type as 'unit' | 'integration' | 'e2e' | 'api',
+      type: itemType as 'unit' | 'integration',
       priority: item.priority as 'low' | 'medium' | 'high',
       status: 'active' as const,
       steps: [],
@@ -480,22 +484,28 @@ Focus on quality over quantity. Each test case should directly validate the requ
     response: OpenAITestGenerationResponse, 
     context: TestGenerationContext
   ): TestGenerationResult {
-    const testCases = response.testCases.map(testCase => ({
-      title: testCase.title,
-      description: testCase.description,
-      type: testCase.type,
-      priority: testCase.priority,
-      status: 'draft' as const,
-      steps: testCase.steps,
-      expectedResult: testCase.expectedResult,
-      preconditions: testCase.preconditions,
-      testData: testCase.testData,
-      estimatedDuration: testCase.estimatedDuration,
-      projectId: '', // Will be set when saving
-      generatedAt: new Date(),
-      generatedBy: 'ai' as const,
-      generatedCode: testCase.generatedCode,
-    }));
+    const testCases = response.testCases.map(testCase => {
+      // Ensure type is one of the allowed values, default to 'integration' for unsupported types
+      const allowedTypes = ['unit', 'integration'] as const;
+      const testCaseType = allowedTypes.includes(testCase.type as any) ? testCase.type as 'unit' | 'integration' : 'integration';
+      
+      return {
+        title: testCase.title,
+        description: testCase.description,
+        type: testCaseType,
+        priority: testCase.priority,
+        status: 'draft' as const,
+        steps: testCase.steps,
+        expectedResult: testCase.expectedResult,
+        preconditions: testCase.preconditions,
+        testData: testCase.testData,
+        estimatedDuration: testCase.estimatedDuration,
+        projectId: '', // Will be set when saving
+        generatedAt: new Date(),
+        generatedBy: 'ai' as const,
+        generatedCode: testCase.generatedCode,
+      };
+    });
 
     const relationships = testCases.map((_, index) => ({
       testCaseId: '', // Will be set when saving
