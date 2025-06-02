@@ -205,6 +205,9 @@ export function WorkItemsList({
 
     setSyncing(true);
     try {
+      // Show initial progress message
+      toast.info("Starting sync from Azure DevOps...", { duration: 2000 });
+
       const response = await fetch("/api/azure/work-items/sync", {
         method: "POST",
         headers: {
@@ -215,6 +218,7 @@ export function WorkItemsList({
           organization,
           project,
           pat: token,
+          includeEmbeddings: true, // Enable automatic embedding creation
         }),
       });
 
@@ -223,9 +227,18 @@ export function WorkItemsList({
       }
 
       const result = await response.json();
+      
+      // Build comprehensive success message
       const deletedText = result.deleted > 0 ? `, ${result.deleted} deleted` : '';
+      const embeddingText = result.embeddingsCreated > 0 
+        ? `, ${result.embeddingsCreated} embeddings created` 
+        : result.embeddingService === 'disabled' 
+          ? ' (embeddings disabled - configure OpenAI API key to enable)' 
+          : '';
+      
       toast.success(
-        `Sync completed: ${result.synced} new, ${result.updated} updated${deletedText}`,
+        `Sync completed: ${result.synced} new, ${result.updated} updated${deletedText}${embeddingText}`,
+        { duration: 5000 }
       );
 
       setDataSource("database");
@@ -650,11 +663,12 @@ export function WorkItemsList({
               onClick={syncWorkItems}
               disabled={syncing}
               className="flex items-center gap-1"
+              title="Sync work items from Azure DevOps and create embeddings for AI search"
             >
               <RefreshCw
                 className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`}
               />
-              {syncing ? "Syncing..." : "Sync from Azure"}
+              {syncing ? "Syncing & Embedding..." : "Sync & Embed"}
             </Button>
           )}
         </div>

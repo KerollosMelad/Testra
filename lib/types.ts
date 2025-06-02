@@ -53,7 +53,7 @@ export interface TestCase {
   id: string;
   title: string;
   description: string;
-  type: "unit" | "integration" | "e2e" | "api";
+  type: "unit" | "integration";
   priority: "low" | "medium" | "high";
   status: "draft" | "active" | "deprecated";
   steps: TestStep[];
@@ -112,7 +112,7 @@ export interface TestGenerationContext {
   userStory: WorkItem;
   relatedTasks: WorkItem[];
   existingTestCases: TestCase[];
-  testType: "unit" | "integration" | "e2e" | "api";
+  testType: "unit" | "integration";
   coverageLevel: "basic" | "comprehensive" | "custom";
   customRequirements?: string;
 }

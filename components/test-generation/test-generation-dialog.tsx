@@ -21,7 +21,7 @@ interface TestGenerationDialogProps {
 interface GeneratedTestCase {
   title: string;
   description: string;
-  type: 'unit' | 'integration' | 'e2e' | 'api';
+  type: 'unit' | 'integration';
   priority: 'low' | 'medium' | 'high';
   steps: Array<{
     step: number;
@@ -37,7 +37,7 @@ interface GeneratedTestCase {
 }
 
 export function TestGenerationDialog({ open, onOpenChange, workItem, projectId }: TestGenerationDialogProps) {
-  const [testType, setTestType] = useState<'unit' | 'integration' | 'e2e' | 'api'>('integration');
+  const [testType, setTestType] = useState<'unit' | 'integration'>('integration');
   const [coverageLevel, setCoverageLevel] = useState<'basic' | 'comprehensive' | 'custom'>('basic');
   const [customRequirements, setCustomRequirements] = useState('');
   const [loading, setLoading] = useState(false);
@@ -87,6 +87,30 @@ export function TestGenerationDialog({ open, onOpenChange, workItem, projectId }
     setError(null);
     setCustomRequirements('');
     onOpenChange(false);
+  };
+
+  const getTestTypeDescription = (type: string) => {
+    switch (type) {
+      case 'unit':
+        return 'Test individual components/functions in isolation for this specific work item only';
+      case 'integration':
+        return 'Test interactions between components, leveraging similar work items and system dependencies';
+      default:
+        return '';
+    }
+  };
+
+  const getCoverageDescription = (level: string) => {
+    switch (level) {
+      case 'basic':
+        return 'Generate essential test scenarios covering main functionality and happy path';
+      case 'comprehensive':
+        return 'Generate detailed test coverage including edge cases, error handling, and all acceptance criteria';
+      case 'custom':
+        return 'Define specific test requirements and scenarios to focus on';
+      default:
+        return '';
+    }
   };
 
   const getPriorityColor = (priority: string) => {
@@ -139,12 +163,23 @@ export function TestGenerationDialog({ open, onOpenChange, workItem, projectId }
                       <SelectValue placeholder="Select test type" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="unit">Unit Tests</SelectItem>
-                      <SelectItem value="integration">Integration Tests</SelectItem>
-                      <SelectItem value="e2e">End-to-End Tests</SelectItem>
-                      <SelectItem value="api">API Tests</SelectItem>
+                      <SelectItem value="unit">
+                        <div className="flex flex-col">
+                          <span className="font-medium">Unit Tests</span>
+                          <span className="text-xs text-gray-500">Isolated component testing</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="integration">
+                        <div className="flex flex-col">
+                          <span className="font-medium">Integration Tests</span>
+                          <span className="text-xs text-gray-500">Component interaction testing</span>
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {getTestTypeDescription(testType)}
+                  </p>
                 </div>
 
                 <div>
@@ -154,11 +189,29 @@ export function TestGenerationDialog({ open, onOpenChange, workItem, projectId }
                       <SelectValue placeholder="Select coverage level" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="basic">Basic Coverage</SelectItem>
-                      <SelectItem value="comprehensive">Comprehensive Coverage</SelectItem>
-                      <SelectItem value="custom">Custom Requirements</SelectItem>
+                      <SelectItem value="basic">
+                        <div className="flex flex-col">
+                          <span className="font-medium">Basic Coverage</span>
+                          <span className="text-xs text-gray-500">Essential scenarios only</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="comprehensive">
+                        <div className="flex flex-col">
+                          <span className="font-medium">Comprehensive Coverage</span>
+                          <span className="text-xs text-gray-500">Detailed with edge cases</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="custom">
+                        <div className="flex flex-col">
+                          <span className="font-medium">Custom Requirements</span>
+                          <span className="text-xs text-gray-500">Define specific scenarios</span>
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {getCoverageDescription(coverageLevel)}
+                  </p>
                 </div>
               </div>
 
