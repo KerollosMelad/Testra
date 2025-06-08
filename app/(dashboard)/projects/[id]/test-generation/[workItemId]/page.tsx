@@ -54,7 +54,7 @@ export default function TestGenerationPage() {
 
   const [workItem, setWorkItem] = useState<WorkItem | null>(null);
   const [loading, setLoading] = useState(true);
-  const [testType, setTestType] = useState<'unit' | 'integration'>('integration');
+  const [testType, setTestType] = useState<'unit' | 'integration'>('unit');
   const [coverageLevel, setCoverageLevel] = useState<'basic' | 'comprehensive' | 'custom'>('basic');
   const [customRequirements, setCustomRequirements] = useState('');
   const [streaming, setStreaming] = useState(false);

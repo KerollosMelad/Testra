@@ -25,8 +25,12 @@ export async function POST(request: NextRequest) {
     // Get and validate project
     const project = await getProject(requestData.projectId);
     
-    // Fetch work item and related data from Azure DevOps
-    const { userStory, relatedTasks } = await fetchWorkItemData(project, requestData.workItemId);
+    // Fetch work item and related data from database
+    const { userStory, relatedTasks } = await fetchWorkItemDataFromDatabase(
+      requestData.projectId, 
+      requestData.workItemId, 
+      requestData.testType || 'integration'
+    );
     
     // Get existing test cases for context
     const existingTestCases = await getExistingTestCases(requestData.projectId);
@@ -214,129 +218,70 @@ async function getProject(projectId: string): Promise<Project> {
   return transformedProject;
 }
 
-async function fetchWorkItemData(project: Project, workItemId: string): Promise<{
+async function fetchWorkItemDataFromDatabase(
+  projectId: string, 
+  workItemId: string, 
+  testType: string
+): Promise<{
   userStory: WorkItem;
   relatedTasks: WorkItem[];
 }> {
   try {
-    // Get all work items from Azure DevOps
-    const workItems = await fetchWorkItemsFromAzure(project);
-    
-    // Find the specific work item
-    const userStory = findWorkItem(workItems, workItemId);
-    
-    // Find related tasks (children of the user story)
-    const relatedTasks = findRelatedTasks(workItems, workItemId);
-    
+    // Get the specific work item
+    const { data: workItemData, error: workItemError } = await supabaseAdmin
+      .from("work_items")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("azure_id", workItemId)
+      .single();
+
+    if (workItemError || !workItemData) {
+      throw new Error("Work item not found in database");
+    }
+
+    const userStory = transformDatabaseWorkItem(workItemData);
+
+    // For unit tests, focus only on the specific work item - skip related tasks
+    if (testType === 'unit') {
+      return { userStory, relatedTasks: [] };
+    }
+
+    // For integration tests, get related tasks (children of the user story)
+    const { data: relatedTasksData, error: relatedTasksError } = await supabaseAdmin
+      .from("work_items")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("parent_id", workItemId);
+
+    const relatedTasks = relatedTasksData 
+      ? relatedTasksData.map(item => transformDatabaseWorkItem(item, workItemId))
+      : [];
+
     return { userStory, relatedTasks };
   } catch (error) {
-    console.error("Error fetching from Azure DevOps:", error);
-    throw new Error("Failed to fetch work item details from Azure DevOps");
+    console.error("Error fetching from database:", error);
+    throw new Error("Failed to fetch work item details from database");
   }
 }
 
-async function fetchWorkItemsFromAzure(project: Project): Promise<any[]> {
-  // Build WIQL query
-  const wiqlQuery = {
-    query: `
-      SELECT [System.Id], [System.Title], [System.Description], [System.WorkItemType], 
-             [System.State], [System.AssignedTo], [Microsoft.VSTS.Common.Priority], 
-             [Microsoft.VSTS.Common.AcceptanceCriteria], [System.Tags], 
-             [System.CreatedDate], [System.ChangedDate], [System.Parent]
-      FROM WorkItems 
-      WHERE [System.TeamProject] = '${project.project}' 
-      AND [System.WorkItemType] IN ('User Story', 'Task', 'Bug', 'Feature')
-      ORDER BY [System.ChangedDate] DESC
-    `,
-  };
-
-  // Execute WIQL query
-  const wiqlUrl = `https://dev.azure.com/${project.organization}/${project.project}/_apis/wit/wiql?api-version=7.0`;
-  const wiqlResponse = await fetchFromAzure(wiqlUrl, project.token, {
-    method: "POST",
-    body: JSON.stringify(wiqlQuery),
-  });
-
-  const wiqlResult = await wiqlResponse.json();
-  const workItemIds = wiqlResult.workItems?.map((item: any) => item.id) || [];
-
-  if (workItemIds.length === 0) {
-    throw new Error("No work items found in the project");
-  }
-
-  // Fetch detailed work item information
-  const batchUrl = `https://dev.azure.com/${project.organization}/_apis/wit/workitems?ids=${workItemIds.join(",")}&$expand=relations&api-version=7.0`;
-  const batchResponse = await fetchFromAzure(batchUrl, project.token);
-  const batchResult = await batchResponse.json();
-
-  return batchResult.value || [];
-}
-
-async function fetchFromAzure(url: string, token: string, options: any = {}): Promise<Response> {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: "Basic " + Buffer.from(":" + token).toString("base64"),
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Azure DevOps API error: ${response.status} ${response.statusText}`);
-  }
-
-  return response;
-}
-
-function findWorkItem(workItems: any[], workItemId: string): WorkItem {
-  const workItem = workItems.find((item: any) => item.id.toString() === workItemId);
-  
-  if (!workItem) {
-    throw new Error("Work item not found");
-  }
-
-  return transformWorkItem(workItem);
-}
-
-function findRelatedTasks(workItems: any[], workItemId: string): WorkItem[] {
-  return workItems
-    .filter((item: any) => {
-      // Check if this item has a parent relationship to our work item
-      if (item.relations) {
-        return item.relations.some(
-          (relation: any) =>
-            relation.rel.includes("Parent") &&
-            relation.url.includes(`workItems/${workItemId}`)
-        );
-      }
-      return false;
-    })
-    .map((item: any) => transformWorkItem(item, workItemId));
-}
-
-function transformWorkItem(azureWorkItem: any, parentId?: string): WorkItem {
+function transformDatabaseWorkItem(dbWorkItem: any, parentId?: string): WorkItem {
   return {
-    id: azureWorkItem.id.toString(),
-    title: azureWorkItem.fields["System.Title"] || "",
-    description: cleanUserStoryDescription(azureWorkItem.fields["System.Description"]) || "",
-    workItemType: azureWorkItem.fields["System.WorkItemType"] || "",
-    state: azureWorkItem.fields["System.State"] || "",
-    assignedTo: azureWorkItem.fields["System.AssignedTo"]?.displayName || undefined,
-    priority: azureWorkItem.fields["Microsoft.VSTS.Common.Priority"] || undefined,
-    acceptanceCriteria: htmlAcceptanceCriteriaToText(azureWorkItem.fields["Microsoft.VSTS.Common.AcceptanceCriteria"]) || undefined,
-    tags: azureWorkItem.fields["System.Tags"]
-      ? azureWorkItem.fields["System.Tags"]
-          .split(";")
-          .map((tag: string) => tag.trim())
-      : [],
-    createdDate: azureWorkItem.fields["System.CreatedDate"] || null,
-    changedDate: azureWorkItem.fields["System.ChangedDate"] || null,
+    id: dbWorkItem.azure_id,
+    title: dbWorkItem.title || "",
+    description: dbWorkItem.description || "",
+    workItemType: dbWorkItem.work_item_type || "",
+    state: dbWorkItem.state || "",
+    assignedTo: dbWorkItem.assigned_to || undefined,
+    priority: dbWorkItem.priority || undefined,
+    acceptanceCriteria: dbWorkItem.acceptance_criteria || undefined,
+    tags: dbWorkItem.tags || [],
+    createdDate: dbWorkItem.created_date || null,
+    changedDate: dbWorkItem.changed_date || null,
     parentId: parentId,
     children: [],
     relatedItems: [],
-    isUserStory: azureWorkItem.fields["System.WorkItemType"] === "User Story",
-    isTask: azureWorkItem.fields["System.WorkItemType"] === "Task",
+    isUserStory: dbWorkItem.work_item_type === "User Story",
+    isTask: dbWorkItem.work_item_type === "Task",
     hasChildren: false,
     hasParent: !!parentId,
   };
