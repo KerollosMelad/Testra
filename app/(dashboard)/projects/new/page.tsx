@@ -42,7 +42,7 @@ const schema = z.object({
   project: z.string().min(1, "Project is required"),
   pat: z.string().min(1, "Personal Access Token is required"),
   openaiApiKey: z.string().min(1, "OpenAI API Key is required"),
-  aiModel: z.enum(["gpt-4", "gpt-3.5-turbo"]),
+  aiModel: z.enum(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-0125-preview", "gpt-4", "gpt-3.5-turbo-0125", "gpt-3.5-turbo"]),
   temperature: z.coerce.number().min(0).max(2),
   maxTokens: z.coerce.number().min(1),
   autoGeneration: z.boolean(),
@@ -65,13 +65,13 @@ export default function NewProjectPage() {
       project: "",
       pat: "",
       openaiApiKey: "",
-      aiModel: "gpt-4",
+      aiModel: "gpt-4o",
       temperature: 0.7,
-      maxTokens: 1024,
-      autoGeneration: true,
-      aiChat: true,
-      codeGeneration: true,
-      workItemTypes: ["User Story", "Task", "Bug", "Feature"],
+      maxTokens: 2000,
+      autoGeneration: false,
+      aiChat: false,
+      codeGeneration: false,
+      workItemTypes: [],
     },
   });
   const [testing, setTesting] = useState(false);
@@ -81,6 +81,8 @@ export default function NewProjectPage() {
   const router = useRouter();
 
   const handleTestConnection = async (values: FormValues) => {
+    console.log("DEBUG: handleTestConnection called", values);
+    alert("DEBUG: handleTestConnection triggered!"); // Remove this after testing
     setTesting(true);
     setTestResult(null);
     try {
@@ -458,10 +460,7 @@ export default function NewProjectPage() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="gpt-4">GPT-4</SelectItem>
-                          <SelectItem value="gpt-3.5-turbo">
-                            GPT-3.5 Turbo
-                          </SelectItem>
+                          <SelectItem value="gpt-4o">GPT-4o</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />

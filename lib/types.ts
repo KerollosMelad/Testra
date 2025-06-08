@@ -6,7 +6,7 @@ export interface Project {
   project: string;
   token: string;
   openaiApiKey: string;
-  aiModel: "gpt-4" | "gpt-3.5-turbo";
+  aiModel: "gpt-4o" | "gpt-4o-mini" | "gpt-4-turbo" | "gpt-4-0125-preview" | "gpt-4" | "gpt-3.5-turbo-0125" | "gpt-3.5-turbo";
   temperature: number;
   maxTokens: number;
   autoGeneration: boolean;

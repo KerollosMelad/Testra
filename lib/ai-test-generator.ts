@@ -1,10 +1,54 @@
-import { createOpenAIClient, OpenAITestGenerationRequest, OpenAITestGenerationResponse } from './openai';
+import { createOpenAIClient, OpenAITestGenerationResponse } from './openai';
 import { WorkItem, TestCase, TestGenerationContext, TestGenerationResult } from './types';
 import { createEmbeddingService } from './embedding-service';
 import OpenAI from 'openai';
 
+// Enhanced interfaces for chunked generation
+interface AcceptanceCriteriaChunk {
+  id: string;
+  criteria: string[];
+  originalCriteria: string[]; // Keep original text before summarization
+  relatedTo?: string[]; // IDs of other chunks this relates to
+  priority: 'high' | 'medium' | 'low';
+  dependsOn?: string[]; // IDs of chunks that must be generated first
+  estimatedTokens: number;
+}
+
+interface ChunkedGenerationContext extends TestGenerationContext {
+  currentChunk?: AcceptanceCriteriaChunk;
+  previouslyGeneratedTests?: TestCase[];
+  previousTestsSummary?: string;
+  totalChunks?: number;
+  currentChunkIndex?: number;
+  allChunks?: AcceptanceCriteriaChunk[];
+}
+
+interface StreamingTestGenerationResult {
+  chunk: TestGenerationResult;
+  isComplete: boolean;
+  progress: number; // 0-100
+  chunkId: string;
+  currentChunkIndex: number;
+  totalChunks: number;
+  acceptanceCriteria: string[]; // The criteria this chunk covers
+  canPause: boolean;
+}
+
+interface TestGenerationOptions {
+  enableStreaming?: boolean;
+  maxTokensPerChunk?: number;
+  enablePause?: boolean;
+  chunkSize?: number; // 2-3 by default
+}
+
+// Enhanced TestCase interface
+interface EnhancedTestCase extends TestCase {
+  coveredCriteria?: string[]; // Which acceptance criteria this test covers
+  chunkId?: string; // Which chunk generated this test
+  dependsOnTests?: string[]; // Test IDs this test depends on
+}
+
 export class AITestGenerator {
-  private model: string;
   private temperature: number;
   private maxTokens: number;
   private openai: OpenAI;
@@ -12,12 +56,10 @@ export class AITestGenerator {
 
   constructor(
     apiKey: string,
-    model: string = 'gpt-4', 
     temperature: number = 0.7, 
     maxTokens: number = 2000
   ) {
     this.openai = createOpenAIClient(apiKey);
-    this.model = model;
     this.temperature = temperature;
     this.maxTokens = maxTokens;
     this.embeddingService = createEmbeddingService(apiKey);
@@ -32,7 +74,7 @@ export class AITestGenerator {
       const prompt = this.buildPrompt(enhancedContext);
       
       // Get AI response
-      const response = await this.getAIResponse(prompt);
+      const response = await this.getAIResponse(prompt, context.testType);
       
       // Transform and return result
       return this.transformToTestGenerationResult(response, enhancedContext);
@@ -46,24 +88,21 @@ export class AITestGenerator {
     try {
       // Only enhance context for integration tests - unit tests should focus on the specific work item only
       if (context.testType !== 'integration') {
-        console.log('Unit test mode: focusing on specific work item only');
         return {
           ...context,
           relatedTasks: [], // Clear related tasks for unit tests
         };
       }
-
-      console.log('Integration test mode: finding similar work items using embeddings');
       
       // Create search query from user story
       const searchQuery = this.createSearchQuery(context.userStory);
-      
+
       // Find similar work items using embeddings for integration tests
       const similarWorkItems = await this.findSimilarWorkItems(searchQuery, context.userStory.id);
-      
+
       // Find similar test cases to avoid duplication
       const similarTestCases = await this.findSimilarTestCases(searchQuery);
-      
+
       return {
         ...context,
         relatedTasks: [...context.relatedTasks, ...similarWorkItems],
@@ -90,7 +129,7 @@ export class AITestGenerator {
   private async findSimilarWorkItems(query: string, excludeAzureId: string): Promise<WorkItem[]> {
     try {
       const similarItems = await this.embeddingService.findSimilarWorkItems(query, 0.8, 5);
-      
+
       // Filter out the current work item (using Azure ID) and convert to WorkItem format
       return similarItems
         .filter((item: any) => item.id !== excludeAzureId) // item.id is azure_id from the search results
@@ -139,7 +178,7 @@ export class AITestGenerator {
   private convertToTestCase(item: any): TestCase {
     // Ensure type is one of the allowed values, default to 'integration' for unsupported types
     const allowedTypes = ['unit', 'integration'] as const;
-    const itemType = allowedTypes.includes(item.type) ? item.type : 'integration';
+    const itemType = allowedTypes.includes(item.type) ? item.type as 'unit' | 'integration' : 'integration';
     
     return {
       id: item.id,
@@ -156,22 +195,10 @@ export class AITestGenerator {
     };
   }
 
-  private async getAIResponse(prompt: string): Promise<OpenAITestGenerationResponse> {
-    const completionParams = this.buildCompletionParams(prompt);
-    
-    let completion;
-    try {
-      completion = await this.openai.chat.completions.create(completionParams);
-    } catch (formatError: any) {
-      // Retry without response_format if it fails
-      if (formatError.message?.includes('response_format')) {
-        console.log('JSON format not supported, retrying without response_format');
-        delete completionParams.response_format;
-        completion = await this.openai.chat.completions.create(completionParams);
-      } else {
-        throw formatError;
-      }
-    }
+  private async getAIResponse(prompt: string, testType: string = 'integration'): Promise<OpenAITestGenerationResponse> {
+    const completionParams = this.buildCompletionParams(prompt, testType);
+
+    const completion = await this.openai.chat.completions.create(completionParams);
 
     const response = completion.choices[0]?.message?.content;
     if (!response) {
@@ -181,15 +208,13 @@ export class AITestGenerator {
     return this.parseAIResponse(response);
   }
 
-  private buildCompletionParams(prompt: string): any {
-    const supportsJsonFormat = this.checkJsonFormatSupport();
-    
+  private buildCompletionParams(prompt: string, testType: string = 'integration'): any {
     const params: any = {
-      model: this.model,
+      model: 'gpt-4o',
       messages: [
         {
           role: 'system',
-          content: this.getSystemPrompt()
+          content: this.getSystemPrompt(testType)
         },
         {
           role: 'user',
@@ -198,29 +223,10 @@ export class AITestGenerator {
       ],
       temperature: this.temperature,
       max_tokens: this.maxTokens,
+      response_format: { type: 'json_object' }
     };
 
-    if (supportsJsonFormat) {
-      params.response_format = { type: 'json_object' };
-      console.log('Using structured JSON response format');
-    } else {
-      console.log('Using text response format with JSON parsing');
-    }
-
     return params;
-  }
-
-  private checkJsonFormatSupport(): boolean {
-    const supportedModels = [
-      'gpt-4', 
-      'gpt-4-turbo', 
-      'gpt-4-turbo-preview',
-      'gpt-4-1106-preview',
-      'gpt-3.5-turbo-1106', 
-      'gpt-3.5-turbo-0125'
-    ];
-    
-    return supportedModels.includes(this.model);
   }
 
   private parseAIResponse(response: string): OpenAITestGenerationResponse {
@@ -272,90 +278,133 @@ export class AITestGenerator {
     };
   }
 
-  private getSystemPrompt(): string {
-    return `You are an expert QA engineer and test automation specialist. Your task is to generate comprehensive test cases based on user stories and project context.
+  private getSystemPrompt(testType: string = 'integration'): string {
+    if (testType === 'unit') {
+      return this.getUnitTestSystemPrompt();
+    } else {
+      return this.getIntegrationTestSystemPrompt();
+    }
+  }
 
-Guidelines:
-1. Generate test cases that cover both positive and negative scenarios
-2. Include edge cases and boundary conditions
-3. Consider user experience and accessibility
-4. Provide clear, actionable test steps
-5. Include appropriate test data and expected results
-6. Consider the specified test type (unit, integration)
-7. **STRICTLY follow the coverage level requirements (basic vs comprehensive)**
-8. **LEVERAGE similar work items and existing test cases to avoid duplication**
+  private getUnitTestSystemPrompt(): string {
+    return `You are an expert QA engineer specializing in unit test generation. Your goal is to create precise, isolated unit tests.
 
-**TEST TYPE FOCUS:**
+## UNIT TEST PRINCIPLES:
+- Test individual component functionality in complete isolation
+- Mock ALL external dependencies (APIs, databases, services, other components)
+- Focus on input validation, business logic, and error handling within the component
+- Test edge cases and boundary conditions
+- Verify component behavior under different input scenarios
 
-**UNIT TESTS:**
-- Focus ONLY on the specific work item functionality
-- Test individual components, functions, or methods in isolation
-- Mock external dependencies and integrations
-- Validate component behavior with various inputs
-- Test error handling within the component
-- Avoid testing interactions with other components
+## COVERAGE APPROACH:
 
-**INTEGRATION TESTS:**
-- Focus on component interactions and data flow
-- Test API contracts and data transformations
-- Include database transaction testing where applicable
-- Test error handling across component boundaries
-- Consider asynchronous operations and event-driven scenarios
-- **Use provided similar work items to understand system interactions**
-- Test integration points between current and related components
+### BASIC (2-4 test cases):
+- Happy path with valid inputs
+- Primary error handling (invalid inputs)
+- Core business logic validation
 
-**COVERAGE LEVEL REQUIREMENTS:**
+### COMPREHENSIVE (6-12 test cases):
+- All input combinations and edge cases
+- Boundary value testing
+- Error scenarios and exception handling
+- State management within the component
+- Input validation and sanitization
 
-**BASIC COVERAGE:**
-- Generate 2-4 essential test cases covering main functionality
-- Focus on happy path scenarios and critical user journeys
-- Include primary success scenarios from acceptance criteria
-- One basic error handling test case
-- Limit complexity and focus on core functionality
+## RESPONSE FORMAT:
+Return ONLY valid JSON with this exact structure:
 
-**COMPREHENSIVE COVERAGE:**
-- Generate 6-12 detailed test cases covering all aspects
-- Include multiple positive and negative scenarios
-- Cover all acceptance criteria thoroughly
-- Include edge cases, boundary conditions, and error scenarios
-- Test data validation, security aspects, and performance considerations
-- Include accessibility and usability testing where relevant
-- Cover all user roles and permission levels if applicable
-
-**CONTEXT UTILIZATION:**
-- Use provided similar work items to understand related functionality (integration tests only)
-- Reference existing test cases to avoid duplication and build upon coverage
-- Identify integration points between the current story and related work items
-- Consider how changes might affect related components
-
-IMPORTANT: You MUST respond with a valid JSON object only. Do not include any text before or after the JSON.
-
-Response format: Return ONLY a valid JSON object with this structure:
 {
   "testCases": [
     {
-      "title": "string",
-      "description": "string", 
-      "type": "unit|integration",
-      "priority": "low|medium|high",
+      "title": "Clear, descriptive test name focused on specific behavior",
+      "description": "What specific component behavior this test validates",
+      "type": "unit",
+      "priority": "low" | "medium" | "high",
       "steps": [
         {
-          "step": number,
-          "action": "string",
-          "expectedOutcome": "string",
-          "testData": {}
+          "step": 1,
+          "action": "Setup component with specific inputs/mocks",
+          "expectedOutcome": "Expected component behavior",
+          "testData": {"input": "test_value"}
         }
       ],
-      "expectedResult": "string",
-      "preconditions": "string",
-      "testData": {},
-      "estimatedDuration": number,
-      "generatedCode": "string"
+      "expectedResult": "Specific component output or behavior",
+      "preconditions": "Required mocks and test setup",
+      "testData": {"inputs": "test_values"},
+      "estimatedDuration": 10,
+      "generatedCode": "// Unit test implementation with mocks"
     }
   ],
-  "suggestions": ["string"],
-  "confidence": number
-}`;
+  "suggestions": ["Improvement recommendations"],
+  "confidence": 0.9
+}
+
+IMPORTANT: 
+- Focus ONLY on the specific component being tested
+- Mock everything external (no real API calls, database operations, or component integrations)
+- Each test should validate one specific behavior or scenario
+- Respond with ONLY the JSON object. No additional text.`;
+  }
+
+  private getIntegrationTestSystemPrompt(): string {
+    return `You are an expert QA engineer specializing in integration test generation. Your goal is to create comprehensive end-to-end integration tests.
+
+## INTEGRATION TEST PRINCIPLES:
+- Test component interactions and data flow between systems
+- Include real API contracts, database operations, and service integrations
+- Validate complete user workflows and business processes
+- Test error propagation across system boundaries
+- Verify system behavior under realistic conditions
+
+## COVERAGE APPROACH:
+
+### BASIC (2-4 test cases):
+- Primary user workflow (happy path)
+- Critical system integration points
+- Basic error handling across components
+
+### COMPREHENSIVE (6-12 test cases):
+- Complete user journeys from start to finish
+- Multiple integration points and data flows
+- Cross-system error scenarios
+- Performance and scalability considerations
+- Security and authorization workflows
+
+## RESPONSE FORMAT:
+Return ONLY valid JSON with this exact structure:
+
+{
+  "testCases": [
+    {
+      "title": "Clear, descriptive test name for end-to-end scenario",
+      "description": "What complete workflow this test validates",
+      "type": "integration",
+      "priority": "low" | "medium" | "high",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Real system action (API call, database operation, etc.)",
+          "expectedOutcome": "Expected system response",
+          "testData": {"endpoint": "/api/test", "payload": {}}
+        }
+      ],
+      "expectedResult": "Complete workflow outcome",
+      "preconditions": "Required system state and data setup",
+      "testData": {"realistic": "production_like_data"},
+      "estimatedDuration": 20,
+      "generatedCode": "// Integration test with real system calls"
+    }
+  ],
+  "suggestions": ["Improvement recommendations"],
+  "confidence": 0.9
+}
+
+IMPORTANT: 
+- Test real system integrations (no mocking of external systems)
+- Focus on complete user workflows and business processes
+- Include realistic test data and production-like scenarios
+- Each test should validate end-to-end functionality
+- Respond with ONLY the JSON object. No additional text.`;
   }
 
   private buildPrompt(context: TestGenerationContext): string {
@@ -436,18 +485,14 @@ ${existingTestCases.slice(0, 3).map(tc => `- ${tc.title} (${tc.type})`).join('\n
   }
 
   private buildInstructionsSection(testType: string, coverageLevel: string): string {
-    const testTypeGuidance = testType === 'unit' 
-      ? `**UNIT TEST FOCUS:**
-- Test ONLY the specific work item functionality in isolation
-- Mock all external dependencies and integrations
-- Focus on component behavior, input validation, and error handling
-- Avoid testing interactions with other system components`
-      : `**INTEGRATION TEST FOCUS:**
-- Test component interactions and data flow between systems
-- Include API contracts, database operations, and external service calls
-- Leverage similar work items to understand system integration points
-- Test error propagation across component boundaries`;
+    if (testType === 'unit') {
+      return this.buildUnitTestInstructions(coverageLevel);
+    } else {
+      return this.buildIntegrationTestInstructions(coverageLevel);
+    }
+  }
 
+  private buildUnitTestInstructions(coverageLevel: string): string {
     const coverageGuidance = coverageLevel === 'basic'
       ? `**BASIC COVERAGE REQUIREMENTS:**
 - Generate 2-4 essential test cases only
@@ -465,16 +510,57 @@ ${existingTestCases.slice(0, 3).map(tc => `- ${tc.title} (${tc.type})`).join('\n
 - Follow the specific custom requirements provided
 - Balance thoroughness with the requested scope`;
 
-    return `${testTypeGuidance}
+    return `**UNIT TEST FOCUS:**
+- Test ONLY the specific work item functionality in complete isolation
+- Mock ALL external dependencies (APIs, databases, services, other components)
+- Focus on component behavior, input validation, and error handling
+- Test business logic and state management within the component
 
 ${coverageGuidance}
 
-**GENERAL REQUIREMENTS:**
+**UNIT TEST REQUIREMENTS:**
+1. Cover the acceptance criteria thoroughly based on coverage level
+2. Include realistic test data and expected outcomes for isolated component testing
+3. Provide estimated duration in minutes (typically 5-15 minutes per unit test)
+4. Include generated code examples with proper mocking
+5. Focus solely on the current component without external dependencies
+6. Ensure each test case validates one specific behavior or scenario
+
+Focus on quality over quantity. Each unit test should validate specific component behavior in isolation and be executable by the testing team.`;
+  }
+
+  private buildIntegrationTestInstructions(coverageLevel: string): string {
+    const coverageGuidance = coverageLevel === 'basic'
+      ? `**BASIC COVERAGE REQUIREMENTS:**
+- Generate 2-4 essential test cases only
+- Focus on happy path and primary success scenarios
+- Include one basic error handling case
+- Cover main acceptance criteria without edge cases`
+      : coverageLevel === 'comprehensive'
+      ? `**COMPREHENSIVE COVERAGE REQUIREMENTS:**
+- Generate 6-12 detailed test cases
+- Cover ALL acceptance criteria thoroughly
+- Include multiple positive and negative scenarios
+- Test edge cases, boundary conditions, and error scenarios
+- Include data validation, security, and performance considerations`
+      : `**CUSTOM COVERAGE:**
+- Follow the specific custom requirements provided
+- Balance thoroughness with the requested scope`;
+
+    return `**INTEGRATION TEST FOCUS:**
+- Test component interactions and data flow between systems
+- Include API contracts, database operations, and external service calls
+- Leverage similar work items to understand system integration points
+- Test error propagation across component boundaries
+
+${coverageGuidance}
+
+**INTEGRATION TEST REQUIREMENTS:**
 1. Cover the acceptance criteria thoroughly based on coverage level
 2. Include realistic test data and expected outcomes
 3. Provide estimated duration in minutes
 4. Include generated code examples where applicable
-5. ${testType === 'integration' ? 'Build upon related work items and avoid duplicating existing test cases' : 'Focus solely on the current work item without external dependencies'}
+5. Build upon related work items and avoid duplicating existing test cases
 6. Ensure each test case is clear, actionable, and valuable
 
 Focus on quality over quantity. Each test case should directly validate the requirements and be executable by the testing team.`;
@@ -531,7 +617,7 @@ Focus on quality over quantity. Each test case should directly validate the requ
       const prompt = this.buildTestCodePrompt(testCase, framework, language);
 
       const completion = await this.openai.chat.completions.create({
-        model: this.model,
+        model: 'gpt-4o',
         messages: [
           {
             role: 'system',
@@ -565,14 +651,546 @@ Focus on quality over quantity. Each test case should directly validate the requ
 
 Please generate clean, well-commented, and executable test code that follows best practices for ${framework} and ${language}.`;
   }
+
+  // New streaming generation method
+  async *generateTestCasesStreaming(
+    context: TestGenerationContext, 
+    options: TestGenerationOptions = {}
+  ): AsyncGenerator<StreamingTestGenerationResult, void, unknown> {
+    const {
+      enableStreaming = true,
+      maxTokensPerChunk = 1500,
+      chunkSize = 3,
+      enablePause = true
+    } = options;
+
+    try {
+      // Parse and chunk acceptance criteria
+      const chunks = await this.analyzeAndChunkAcceptanceCriteria(
+        context.userStory.acceptanceCriteria || '',
+        chunkSize,
+        maxTokensPerChunk
+      );
+
+
+
+      let previousTests: TestCase[] = [];
+      let previousSummary = '';
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        
+        // Create chunked context
+        const chunkedContext: ChunkedGenerationContext = {
+          ...context,
+          currentChunk: chunk,
+          previouslyGeneratedTests: previousTests,
+          previousTestsSummary: previousSummary,
+          totalChunks: chunks.length,
+          currentChunkIndex: i,
+          allChunks: chunks
+        };
+
+        try {
+          // Generate tests for this chunk
+          const result = await this.generateTestCasesForChunk(chunkedContext);
+          
+          // Add covered criteria to test cases
+          const enhancedTestCases = result.testCases.map(tc => ({
+            ...tc,
+            coveredCriteria: chunk.originalCriteria,
+            chunkId: chunk.id
+          })) as (TestCase & { coveredCriteria: string[]; chunkId: string })[];
+
+          // Update previous tests and summary
+          previousTests = [...previousTests, ...enhancedTestCases];
+          previousSummary = this.createDetailedTestSummary(previousTests);
+
+          yield {
+            chunk: {
+              ...result,
+              testCases: enhancedTestCases
+            },
+            isComplete: i === chunks.length - 1,
+            progress: Math.round(((i + 1) / chunks.length) * 100),
+            chunkId: chunk.id,
+            currentChunkIndex: i,
+            totalChunks: chunks.length,
+            acceptanceCriteria: chunk.originalCriteria,
+            canPause: enablePause
+          };
+
+        } catch (error) {
+          console.error(`Error generating tests for chunk ${chunk.id}:`, error);
+          
+          // Continue with next chunk instead of failing completely
+          yield {
+            chunk: {
+              testCases: [],
+              relationships: [],
+              suggestions: [`Failed to generate tests for criteria: ${chunk.originalCriteria.join(', ')}`],
+              confidence: 0
+            },
+            isComplete: i === chunks.length - 1,
+            progress: Math.round(((i + 1) / chunks.length) * 100),
+            chunkId: chunk.id,
+            currentChunkIndex: i,
+            totalChunks: chunks.length,
+            acceptanceCriteria: chunk.originalCriteria,
+            canPause: enablePause
+          };
+        }
+      }
+
+    } catch (error) {
+      console.error('Error in streaming generation:', error);
+      throw new Error(`Failed to generate test cases in streaming mode: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // Enhanced acceptance criteria analysis and chunking
+  private async analyzeAndChunkAcceptanceCriteria(
+    acceptanceCriteria: string,
+    maxChunkSize: number = 3,
+    maxTokensPerChunk: number = 1500
+  ): Promise<AcceptanceCriteriaChunk[]> {
+    
+    // Parse acceptance criteria into individual items
+    const criteriaItems = this.parseAcceptanceCriteria(acceptanceCriteria);
+    
+    if (criteriaItems.length === 0) {
+      // Fallback: treat the entire acceptanceCriteria as a single chunk
+      const cleanedCriteria = this.extractPlainTextFromHTML(acceptanceCriteria);
+      
+      return [{
+        id: 'chunk-1',
+        criteria: [cleanedCriteria],
+        originalCriteria: [cleanedCriteria],
+        priority: 'high',
+        estimatedTokens: this.estimateTokens(cleanedCriteria)
+      }];
+    }
+
+
+
+    // Detect dependencies between criteria
+    const dependencies = await this.detectCriteriaDependencies(criteriaItems);
+    
+    // Create chunks based on dependencies and size limits
+    const chunks = this.createOptimalChunks(criteriaItems, dependencies, maxChunkSize, maxTokensPerChunk);
+    
+    return chunks;
+  }
+
+  private parseAcceptanceCriteria(acceptanceCriteria: string): string[] {
+    if (!acceptanceCriteria) {
+      return [];
+    }
+    
+    // First try to extract from structured patterns
+    let criteria = this.parseTextCriteria(acceptanceCriteria);
+    
+    // If no criteria found, try extracting from description that contains "Acceptance Criteria:"
+    if (criteria.length === 0) {
+      criteria = this.extractCriteriaFromDescription(acceptanceCriteria);
+    }
+    
+    return criteria;
+  }
+  
+  private extractCriteriaFromDescription(text: string): string[] {
+    // Handle case where acceptance criteria are embedded in description
+    const criteriaMatch = text.match(/(?:✅\s*)?(?:acceptance\s+criteria|criteria)[:\s]+(.*?)(?:\n\n|$)/i);
+    
+    if (criteriaMatch && criteriaMatch[1]) {
+      const criteriaText = criteriaMatch[1].trim();
+      
+      // Try to split by periods followed by capital letters (sentence boundaries)
+      const sentences = criteriaText
+        .split(/\.\s+(?=[A-Z]|Patient|Booking|Doctor|Time)/)
+        .map(s => s.trim())
+        .filter(s => s.length > 10)
+        .map(s => s.endsWith('.') ? s : s + '.');
+      
+      if (sentences.length > 1) {
+        return sentences;
+      }
+      
+      // Fallback: split by common patterns in the text
+      return this.parseTextCriteria(criteriaText);
+    }
+    
+    return [];
+  }
+
+  private parseTextCriteria(text: string): string[] {
+    // Enhanced patterns with better matching
+    const patterns = [
+      // Numbered lists with various formats
+      /(?:^|\n)\s*\d+[\.\)]\s+(.+?)(?=\n\s*\d+[\.\)]|\n\s*[A-Z]|$)/g,
+      // Bullet points  
+      /(?:^|\n)\s*[-•*]\s+(.+?)(?=\n\s*[-•*]|\n\s*[A-Z]|$)/g,
+      // BDD format
+      /(?:^|\n)\s*(?:Given|When|Then|And|But)\s+(.+?)(?=\n\s*(?:Given|When|Then|And|But)|\n\s*[A-Z]|$)/gi,
+      // Requirements format
+      /(?:^|\n)\s*(?:Patient|Booking|Doctor|Time|User)\s+(.+?)(?=\n\s*(?:Patient|Booking|Doctor|Time|User)|\n\s*[A-Z]|$)/gi,
+    ];
+
+    let items: string[] = [];
+    
+    // Try each pattern to find the best match
+    for (const pattern of patterns) {
+      const matches = Array.from(text.matchAll(pattern));
+      if (matches.length > 0) {
+        items = matches
+          .map(match => match[1]?.trim() || match[0]?.trim())
+          .filter(item => item && item.length > 10);
+        
+        if (items.length > 1) {
+          break;
+        }
+      }
+    }
+    
+    // If patterns didn't work, try sentence splitting
+    if (items.length <= 1) {
+      const sentences = text
+        .split(/\.\s+(?=[A-Z]|Patient|Booking|Doctor|Time|User)/)
+        .map(s => s.trim())
+        .filter(s => s.length > 15)
+        .map(s => s.endsWith('.') ? s : s + '.');
+      
+      if (sentences.length > 1) {
+        items = sentences;
+      }
+    }
+    
+    // Last resort: split by key requirement words
+    if (items.length <= 1) {
+      const requirements = text
+        .split(/(?=\b(?:Patient|Booking|Doctor|Time|User)\s+(?:can|must|should|will))/i)
+        .map(s => s.trim())
+        .filter(s => s.length > 10);
+      
+      if (requirements.length > 1) {
+        items = requirements;
+      }
+    }
+
+    return items
+      .map(item => item.trim())
+      .filter(item => item.length > 5)
+      .slice(0, 15); // Reasonable limit
+  }
+
+  private async detectCriteriaDependencies(criteria: string[]): Promise<Map<number, number[]>> {
+    const dependencies = new Map<number, number[]>();
+
+    for (let i = 0; i < criteria.length; i++) {
+      const deps: number[] = [];
+      
+      for (let j = 0; j < criteria.length; j++) {
+        if (i === j) continue;
+        
+        if (this.haveDependency(criteria[i], criteria[j])) {
+          deps.push(j);
+        }
+      }
+      
+      if (deps.length > 0) {
+        dependencies.set(i, deps);
+      }
+    }
+
+    return dependencies;
+  }
+
+  private haveDependency(criteriaA: string, criteriaB: string): boolean {
+    const aLower = criteriaA.toLowerCase();
+    const bLower = criteriaB.toLowerCase();
+
+    // Sequential dependency keywords
+    const sequentialKeywords = ['after', 'then', 'once', 'following', 'when', 'upon'];
+    const hasSequential = sequentialKeywords.some(keyword => 
+      aLower.includes(keyword) && aLower.indexOf(keyword) < aLower.length * 0.7
+    );
+
+    // State dependencies - one mentions output/result of another
+    const stateKeywords = ['login', 'authenticate', 'register', 'submit', 'save', 'create', 'delete'];
+    const sharedStates = stateKeywords.filter(keyword => 
+      aLower.includes(keyword) && bLower.includes(keyword)
+    );
+
+    // Shared entities (extract nouns/key terms)
+    const sharedEntities = this.findSharedEntities(aLower, bLower);
+
+    return hasSequential || sharedStates.length > 0 || sharedEntities.length > 2;
+  }
+
+  private findSharedEntities(textA: string, textB: string): string[] {
+    // Simple entity extraction - look for repeated important words
+    const commonWords = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'should', 'must', 'can', 'will'];
+    
+    const wordsA = textA.split(/\s+/).filter(w => w.length > 2 && !commonWords.includes(w));
+    const wordsB = textB.split(/\s+/).filter(w => w.length > 2 && !commonWords.includes(w));
+    
+    return wordsA.filter(word => wordsB.includes(word));
+  }
+
+  private createOptimalChunks(
+    criteria: string[],
+    dependencies: Map<number, number[]>,
+    maxChunkSize: number,
+    maxTokensPerChunk: number
+  ): AcceptanceCriteriaChunk[] {
+    const chunks: AcceptanceCriteriaChunk[] = [];
+    const processed = new Set<number>();
+    
+    let chunkId = 1;
+
+    for (let i = 0; i < criteria.length; i++) {
+      if (processed.has(i)) continue;
+
+      const chunk: AcceptanceCriteriaChunk = {
+        id: `chunk-${chunkId++}`,
+        criteria: [],
+        originalCriteria: [],
+        priority: this.determinePriority(criteria[i]),
+        estimatedTokens: 0,
+        dependsOn: []
+      };
+
+      // Start with current criteria
+      chunk.criteria.push(criteria[i]);
+      chunk.originalCriteria.push(criteria[i]);
+      chunk.estimatedTokens = this.estimateTokens(criteria[i]);
+      processed.add(i);
+
+      // Add dependent criteria if they fit
+      const dependents = dependencies.get(i) || [];
+      for (const depIndex of dependents) {
+        if (processed.has(depIndex)) continue;
+        if (chunk.criteria.length >= maxChunkSize) break;
+
+        const additionalTokens = this.estimateTokens(criteria[depIndex]);
+        if (chunk.estimatedTokens + additionalTokens > maxTokensPerChunk) break;
+
+        chunk.criteria.push(criteria[depIndex]);
+        chunk.originalCriteria.push(criteria[depIndex]);
+        chunk.estimatedTokens += additionalTokens;
+        processed.add(depIndex);
+      }
+
+      // Handle too-long individual criteria
+      if (chunk.estimatedTokens > maxTokensPerChunk && chunk.criteria.length === 1) {
+        const summarized = this.summarizeLongCriteria(chunk.criteria[0]);
+        chunk.criteria = [summarized];
+        chunk.estimatedTokens = this.estimateTokens(summarized);
+      }
+
+      chunks.push(chunk);
+    }
+
+    return chunks;
+  }
+
+  private determinePriority(criteria: string): 'high' | 'medium' | 'low' {
+    const highPriorityKeywords = ['must', 'required', 'critical', 'essential', 'login', 'security', 'payment'];
+    const lowPriorityKeywords = ['nice to have', 'optional', 'future', 'enhancement'];
+    
+    const lowerCriteria = criteria.toLowerCase();
+    
+    if (highPriorityKeywords.some(keyword => lowerCriteria.includes(keyword))) {
+      return 'high';
+    }
+    
+    if (lowPriorityKeywords.some(keyword => lowerCriteria.includes(keyword))) {
+      return 'low';
+    }
+    
+    return 'medium';
+  }
+
+  private estimateTokens(text: string): number {
+    // Rough estimation: ~4 characters per token
+    return Math.ceil(text.length / 4);
+  }
+
+  private summarizeLongCriteria(criteria: string): string {
+    // Simple summarization - take first sentence and key points
+    const sentences = criteria.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    if (sentences.length <= 1) return criteria;
+    
+    const firstSentence = sentences[0].trim();
+    const keyWords = criteria.toLowerCase().match(/\b(?:must|should|will|can|required|when|if|then)\b/g) || [];
+    
+    return `${firstSentence}. [Key requirements: ${keyWords.slice(0, 3).join(', ')}]`;
+  }
+
+  private createDetailedTestSummary(tests: TestCase[]): string {
+    if (tests.length === 0) return 'No tests generated yet.';
+    
+    const summary = tests.map(test => 
+      `• ${test.title} (${test.type}, ${test.priority} priority) - ${test.description}`
+    ).join('\n');
+    
+    return `Previously generated tests (${tests.length} total):\n${summary}`;
+  }
+
+  // Enhanced method for chunk-specific generation
+  private async generateTestCasesForChunk(context: ChunkedGenerationContext): Promise<TestGenerationResult> {
+    try {
+      // Enhance context with similar items (only for integration tests)
+      const enhancedContext = await this.enhanceContextWithSimilarItems(context);
+      
+      // Build chunk-specific prompt
+      const prompt = this.buildChunkedPrompt(enhancedContext);
+      
+      // Get AI response
+      const response = await this.getAIResponse(prompt, context.testType);
+      
+      // Transform and return result
+      return this.transformToTestGenerationResult(response, enhancedContext);
+    } catch (error) {
+      console.error('Error generating test cases for chunk:', error);
+      throw new Error(`Failed to generate test cases for chunk: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private buildChunkedPrompt(context: ChunkedGenerationContext): string {
+    const { project, userStory, testType, coverageLevel, currentChunk } = context;
+
+    // Build clean, focused prompt
+    const sections = [
+      `# TEST GENERATION REQUEST`,
+      ``,
+      `## Project: ${project.name}`,
+      `Domain: ${project.domain || 'Not specified'}`,
+      ``,
+      `## User Story: ${userStory.title}`,
+      `**Type:** ${userStory.workItemType} | **State:** ${userStory.state}`,
+      ``,
+      this.buildCleanUserStoryDescription(userStory),
+      ``,
+      this.buildAcceptanceCriteriaSection(currentChunk),
+      ``,
+      `## Test Requirements`,
+      `- **Test Type:** ${testType}`,
+      `- **Coverage Level:** ${coverageLevel}`,
+      ``,
+      this.buildTestingInstructions(testType, coverageLevel, currentChunk),
+    ];
+
+    return sections.filter(section => section !== null).join('\n');
+  }
+
+  private buildCleanUserStoryDescription(userStory: WorkItem): string {
+    if (!userStory.description) return '**Description:** No description provided';
+    
+    // Clean up the description by removing acceptance criteria if embedded
+    let cleanDescription = userStory.description
+      .replace(/(?:✅\s*)?(?:acceptance\s+criteria|criteria)[:\s]+.*$/i, '')
+      .trim();
+    
+    if (!cleanDescription) {
+      cleanDescription = 'No additional description provided';
+    }
+
+    return `**Description:**\n${cleanDescription}`;
+  }
+
+  private buildAcceptanceCriteriaSection(chunk?: AcceptanceCriteriaChunk): string {
+    if (!chunk || !chunk.originalCriteria || chunk.originalCriteria.length === 0) {
+      return '## Acceptance Criteria\nNo specific acceptance criteria provided for this test generation.';
+    }
+    
+    const criteriaList = chunk.originalCriteria
+      .map((criteria, index) => `${index + 1}. ${criteria}`)
+      .join('\n');
+    
+    return `## Acceptance Criteria (Focus Area)\n${criteriaList}`;
+  }
+
+  private buildTestingInstructions(testType: string, coverageLevel: string, chunk?: AcceptanceCriteriaChunk): string {
+    const criteriaCount = chunk?.originalCriteria?.length || 0;
+    
+    if (testType === 'unit') {
+      return this.buildUnitTestInstructionsForChunk(coverageLevel, criteriaCount);
+    } else {
+      return this.buildIntegrationTestInstructionsForChunk(coverageLevel, criteriaCount);
+    }
+  }
+
+  private buildUnitTestInstructionsForChunk(coverageLevel: string, criteriaCount: number): string {
+    const expectedTests = coverageLevel === 'comprehensive' 
+      ? Math.min(12, criteriaCount * 3)
+      : Math.min(4, criteriaCount + 1);
+
+    const coverageGuidance = coverageLevel === 'comprehensive'
+      ? `**COMPREHENSIVE COVERAGE:** Generate 6-12 detailed test cases covering all criteria.`
+      : `**BASIC COVERAGE:** Generate 2-4 essential test cases focusing on core functionality.`;
+
+    return `## Testing Instructions
+**UNIT TEST FOCUS:** Test individual component functionality. Mock ALL external dependencies.
+${coverageGuidance}
+
+**Expected Output:** Approximately ${expectedTests} unit test cases that directly validate the acceptance criteria above.
+
+**Unit Test Requirements:**
+- Each test case must map to specific acceptance criteria
+- Mock all external dependencies (APIs, databases, services)
+- Include realistic test data for isolated component testing
+- Provide clear, executable test steps with proper setup/teardown
+- Focus only on the criteria listed above
+- Test component behavior in complete isolation`;
+  }
+
+  private buildIntegrationTestInstructionsForChunk(coverageLevel: string, criteriaCount: number): string {
+    const expectedTests = coverageLevel === 'comprehensive' 
+      ? Math.min(12, criteriaCount * 3)
+      : Math.min(4, criteriaCount + 1);
+
+    const coverageGuidance = coverageLevel === 'comprehensive'
+      ? `**COMPREHENSIVE COVERAGE:** Generate 6-12 detailed test cases covering all criteria.`
+      : `**BASIC COVERAGE:** Generate 2-4 essential test cases focusing on core functionality.`;
+
+    return `## Testing Instructions
+**INTEGRATION TEST FOCUS:** Test component interactions and end-to-end workflows.
+${coverageGuidance}
+
+**Expected Output:** Approximately ${expectedTests} integration test cases that directly validate the acceptance criteria above.
+
+**Integration Test Requirements:**
+- Each test case must map to specific acceptance criteria
+- Include realistic test data and expected outcomes  
+- Provide clear, executable test steps
+- Test real system integrations and workflows
+- Focus only on the criteria listed above
+- Validate end-to-end functionality`;
+  }
+
+  private extractPlainTextFromHTML(html: string): string {
+    if (!html) return '';
+    
+    // Remove HTML tags and clean up text
+    const plainText = html
+      .replace(/<[^>]*>/g, ' ') // Remove HTML tags
+      .replace(/&nbsp;/g, ' ')  // Replace &nbsp; with space
+      .replace(/&lt;/g, '<')    // Decode HTML entities
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')     // Normalize whitespace
+      .trim();
+    
+    return plainText;
+  }
 }
 
 // Factory function to create AI test generator with project settings
 export function createAITestGenerator(
   apiKey: string,
-  model: string = 'gpt-4',
   temperature: number = 0.7,
   maxTokens: number = 2000
 ): AITestGenerator {
-  return new AITestGenerator(apiKey, model, temperature, maxTokens);
+  return new AITestGenerator(apiKey, temperature, maxTokens);
 } 

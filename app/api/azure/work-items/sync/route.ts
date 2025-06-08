@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { createEmbeddingService } from '@/lib/embedding-service';
+import { htmlAcceptanceCriteriaToText, cleanUserStoryDescription } from '@/lib/html-to-text';
+
+interface AzureWorkItem {
+  id: number;
+  fields: {
+    'System.Title': string;
+    'System.Description'?: string;
+    'System.WorkItemType': string;
+    'System.State': string;
+    'System.AssignedTo'?: {
+      displayName: string;
+    };
+    'Microsoft.VSTS.Common.Priority'?: number;
+    'Microsoft.VSTS.Common.AcceptanceCriteria'?: string;
+    'System.Tags'?: string;
+    'System.CreatedDate': string;
+    'System.ChangedDate': string;
+  };
+  relations?: {
+    rel: string;
+    url: string;
+  }[];
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -167,12 +190,12 @@ export async function POST(request: NextRequest) {
       const workItemData = {
         azure_id: azureId,
         title: item.fields['System.Title'] || '',
-        description: item.fields['System.Description'] || null,
+        description: cleanUserStoryDescription(item.fields['System.Description']) || null,
         work_item_type: item.fields['System.WorkItemType'] || '',
         state: item.fields['System.State'] || '',
         assigned_to: item.fields['System.AssignedTo']?.displayName || null,
         priority: item.fields['Microsoft.VSTS.Common.Priority'] || null,
-        acceptance_criteria: item.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || null,
+        acceptance_criteria: htmlAcceptanceCriteriaToText(item.fields['Microsoft.VSTS.Common.AcceptanceCriteria']) || null,
         tags: item.fields['System.Tags'] ? 
           item.fields['System.Tags'].split(';').map((tag: string) => tag.trim()) : 
           null,
@@ -328,12 +351,12 @@ function transformToWorkItemFormat(azureItem: any, azureId: string) {
   return {
     id: azureId,
     title: azureItem.fields['System.Title'] || '',
-    description: azureItem.fields['System.Description'] || '',
+    description: cleanUserStoryDescription(azureItem.fields['System.Description']) || '',
     workItemType: azureItem.fields['System.WorkItemType'] || '',
     state: azureItem.fields['System.State'] || '',
     assignedTo: azureItem.fields['System.AssignedTo']?.displayName || undefined,
     priority: azureItem.fields['Microsoft.VSTS.Common.Priority'] || undefined,
-    acceptanceCriteria: azureItem.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || undefined,
+    acceptanceCriteria: htmlAcceptanceCriteriaToText(azureItem.fields['Microsoft.VSTS.Common.AcceptanceCriteria']) || undefined,
     tags: azureItem.fields['System.Tags'] ? 
       azureItem.fields['System.Tags'].split(';').map((tag: string) => tag.trim()) : 
       [],

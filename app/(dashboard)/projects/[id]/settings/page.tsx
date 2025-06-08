@@ -53,7 +53,7 @@ const schema = z.object({
   project: z.string().min(1, "Project is required"),
   pat: z.string().min(1, "Personal Access Token is required"),
   openaiApiKey: z.string().min(1, "OpenAI API Key is required"),
-  aiModel: z.enum(["gpt-4", "gpt-3.5-turbo"]),
+  aiModel: z.enum(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-0125-preview", "gpt-4", "gpt-3.5-turbo-0125", "gpt-3.5-turbo"]),
   temperature: z.coerce.number().min(0).max(2),
   maxTokens: z.coerce.number().min(1),
   autoGeneration: z.boolean(),
@@ -120,7 +120,7 @@ export default function ProjectSettingsPage() {
           project: project.project,
           pat: project.token,
           openaiApiKey: project.openaiApiKey,
-          aiModel: project.aiModel as "gpt-4" | "gpt-3.5-turbo",
+          aiModel: project.aiModel as "gpt-4o" | "gpt-4o-mini" | "gpt-4-turbo" | "gpt-4-0125-preview" | "gpt-4" | "gpt-3.5-turbo-0125" | "gpt-3.5-turbo",
           temperature: project.temperature,
           maxTokens: project.maxTokens,
           autoGeneration: project.autoGeneration,
@@ -553,10 +553,7 @@ export default function ProjectSettingsPage() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="gpt-4">GPT-4</SelectItem>
-                          <SelectItem value="gpt-3.5-turbo">
-                            GPT-3.5 Turbo
-                          </SelectItem>
+                          <SelectItem value="gpt-4o">GPT-4o</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />

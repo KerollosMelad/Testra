@@ -36,7 +36,7 @@ import {
   Plus,
 } from "lucide-react";
 import { WorkItem, WorkItemRelation } from "@/lib/types";
-import { TestGenerationDialog } from "@/components/test-generation/test-generation-dialog";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 interface WorkItemsListProps {
@@ -100,11 +100,7 @@ export function WorkItemsList({
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [dataSource, setDataSource] = useState<"database" | "live">("database");
 
-  // Test generation dialog state
-  const [testDialogOpen, setTestDialogOpen] = useState(false);
-  const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItem | null>(
-    null,
-  );
+  const router = useRouter();
 
   // Load hierarchy preference from localStorage after hydration
   useEffect(() => {
@@ -527,30 +523,8 @@ export function WorkItemsList({
       toast.error("Project ID is required for test generation");
       return;
     }
-    // Convert TreeNode to WorkItem for the dialog
-    const workItem: WorkItem = {
-      id: node.id,
-      title: node.title,
-      description: node.description,
-      workItemType: node.workItemType,
-      state: node.state,
-      assignedTo: node.assignedTo,
-      priority: node.priority,
-      acceptanceCriteria: node.acceptanceCriteria,
-      tags: node.tags,
-      createdDate: node.createdDate,
-      changedDate: node.changedDate,
-      parentId: node.parentId,
-      children: [], // Empty array for WorkItem children
-      relatedItems: node.relatedItems,
-      isUserStory: node.isUserStory,
-      isTask: node.isTask,
-      hasChildren: node.hasChildren,
-      hasParent: node.hasParent,
-      lastSyncAt: node.lastSyncAt,
-    };
-    setSelectedWorkItem(workItem);
-    setTestDialogOpen(true);
+    // Navigate to the test generation page
+    router.push(`/projects/${projectId}/test-generation/${node.id}`);
   };
 
   if (loading) {
@@ -758,16 +732,6 @@ export function WorkItemsList({
           </div>
         )}
       </div>
-
-      {/* Test Generation Dialog */}
-      {selectedWorkItem && projectId && (
-        <TestGenerationDialog
-          open={testDialogOpen}
-          onOpenChange={setTestDialogOpen}
-          workItem={selectedWorkItem}
-          projectId={projectId}
-        />
-      )}
     </div>
   );
 }

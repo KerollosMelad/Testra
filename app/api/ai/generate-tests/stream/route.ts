@@ -5,7 +5,7 @@ import { TestGenerationContext, WorkItem, Project } from "@/lib/types";
 import { supabaseAdmin } from "@/lib/supabase";
 import { htmlAcceptanceCriteriaToText, cleanUserStoryDescription } from '@/lib/html-to-text';
 
-interface GenerateTestsRequest {
+interface GenerateTestsStreamRequest {
   projectId: string;
   workItemId: string;
   testType?: string;
@@ -13,6 +13,8 @@ interface GenerateTestsRequest {
   customRequirements?: string;
   temperature?: number;
   maxTokens?: number;
+  chunkSize?: number;
+  maxTokensPerChunk?: number;
 }
 
 export async function POST(request: NextRequest) {
@@ -38,22 +40,114 @@ export async function POST(request: NextRequest) {
       requestData
     );
     
-    // Generate test cases using AI
-    const result = await generateTestCases(context, project, requestData);
-    
-    // Return successful response
-    return NextResponse.json({
-      success: true,
-      data: result,
-      metadata: buildResponseMetadata(requestData, project, result),
-    });
+    // Return streaming response
+    return new Response(
+      new ReadableStream({
+        async start(controller) {
+          try {
+            const generator = createAITestGenerator(
+              project.openaiApiKey,
+              requestData.temperature ?? project.temperature,
+              requestData.maxTokens ?? project.maxTokens
+            );
+
+            const streamOptions = {
+              chunkSize: requestData.chunkSize || 3,
+              maxTokensPerChunk: requestData.maxTokensPerChunk || 1500,
+              enablePause: true,
+              enableStreaming: true
+            };
+
+            // Send initial event
+            const initialData = JSON.stringify({
+              type: 'start',
+              data: {
+                totalChunks: 0,
+                workItem: userStory.title,
+                testType: requestData.testType,
+                coverageLevel: requestData.coverageLevel
+              }
+            });
+            controller.enqueue(`data: ${initialData}\n\n`);
+
+            let allTestCases: any[] = [];
+            let allSuggestions: string[] = [];
+
+            for await (const result of generator.generateTestCasesStreaming(context, streamOptions)) {
+              // Send chunk data
+              const chunkData = JSON.stringify({
+                type: 'chunk',
+                data: {
+                  chunkId: result.chunkId,
+                  currentChunkIndex: result.currentChunkIndex,
+                  totalChunks: result.totalChunks,
+                  progress: result.progress,
+                  acceptanceCriteria: result.acceptanceCriteria,
+                  testCases: result.chunk.testCases,
+                  suggestions: result.chunk.suggestions,
+                  confidence: result.chunk.confidence,
+                  isComplete: result.isComplete,
+                  canPause: result.canPause
+                }
+              });
+              controller.enqueue(`data: ${chunkData}\n\n`);
+
+              // Accumulate results
+              allTestCases = [...allTestCases, ...result.chunk.testCases];
+              allSuggestions = [...allSuggestions, ...result.chunk.suggestions];
+
+              // Small delay to ensure UI can keep up
+              await new Promise(resolve => setTimeout(resolve, 100));
+
+              if (result.isComplete) {
+                // Send completion event
+                const completeData = JSON.stringify({
+                  type: 'complete',
+                  data: {
+                    totalTestCases: allTestCases.length,
+                    totalSuggestions: allSuggestions.length,
+                    finalConfidence: result.chunk.confidence
+                  }
+                });
+                controller.enqueue(`data: ${completeData}\n\n`);
+                break;
+              }
+            }
+
+          } catch (error) {
+            const errorData = JSON.stringify({
+              type: 'error',
+              data: {
+                error: error instanceof Error ? error.message : 'Unknown error occurred'
+              }
+            });
+            controller.enqueue(`data: ${errorData}\n\n`);
+          } finally {
+            controller.close();
+          }
+        }
+      }),
+      {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      }
+    );
     
   } catch (error) {
-    return handleError(error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error occurred' 
+      },
+      { status: 500 }
+    );
   }
 }
 
-function validateAndParseRequest(body: any): GenerateTestsRequest {
+function validateAndParseRequest(body: any): GenerateTestsStreamRequest {
   const {
     projectId,
     workItemId,
@@ -62,6 +156,8 @@ function validateAndParseRequest(body: any): GenerateTestsRequest {
     customRequirements,
     temperature = 0.7,
     maxTokens = 2000,
+    chunkSize = 3,
+    maxTokensPerChunk = 1500,
   } = body;
 
   if (!projectId || !workItemId) {
@@ -76,6 +172,8 @@ function validateAndParseRequest(body: any): GenerateTestsRequest {
     customRequirements,
     temperature,
     maxTokens,
+    chunkSize,
+    maxTokensPerChunk,
   };
 }
 
@@ -250,7 +348,7 @@ async function getExistingTestCases(projectId: string): Promise<any[]> {
       .from("test_cases")
       .select("*")
       .eq("project_id", projectId)
-      .limit(10); // Limit for context
+      .limit(10);
 
     if (error) {
       console.error("Error fetching existing test cases:", error);
@@ -259,7 +357,7 @@ async function getExistingTestCases(projectId: string): Promise<any[]> {
 
     return testCases || [];
   } catch (error) {
-    console.error("Error getting existing test cases:", error);
+    console.error("Error in getExistingTestCases:", error);
     return [];
   }
 }
@@ -269,7 +367,7 @@ function buildTestGenerationContext(
   userStory: WorkItem,
   relatedTasks: WorkItem[],
   existingTestCases: any[],
-  requestData: GenerateTestsRequest
+  requestData: GenerateTestsStreamRequest
 ): TestGenerationContext {
   return {
     project: {
@@ -284,91 +382,4 @@ function buildTestGenerationContext(
     coverageLevel: requestData.coverageLevel as any,
     customRequirements: requestData.customRequirements,
   };
-}
-
-async function generateTestCases(
-  context: TestGenerationContext,
-  project: Project,
-  requestData: GenerateTestsRequest
-) {
-  const generator = createAITestGenerator(
-    project.openaiApiKey,
-    requestData.temperature ?? project.temperature,
-    requestData.maxTokens ?? project.maxTokens
-  );
-
-  return await generator.generateTestCases(context);
-}
-
-function buildResponseMetadata(
-  requestData: GenerateTestsRequest,
-  project: Project,
-  result: any
-) {
-  return {
-    projectId: requestData.projectId,
-    workItemId: requestData.workItemId,
-    testType: requestData.testType,
-    coverageLevel: requestData.coverageLevel,
-    generatedAt: new Date().toISOString(),
-    model: "gpt-4o",
-    confidence: result.confidence,
-    enhancedWithEmbeddings: true, // Indicate that embeddings were used
-  };
-}
-
-function handleError(error: unknown): NextResponse {
-  console.error("Error generating test cases:", error);
-
-  if (error instanceof Error) {
-    // Handle specific error types
-    if (error.message.includes("not found")) {
-      return NextResponse.json({ error: error.message }, { status: 404 });
-    }
-    
-    if (error.message.includes("API key")) {
-      return NextResponse.json(
-        { error: "Invalid OpenAI API key. Please check your configuration." },
-        { status: 401 }
-      );
-    }
-    
-    if (error.message.includes("quota")) {
-      return NextResponse.json(
-        { error: "OpenAI API quota exceeded. Please check your usage limits." },
-        { status: 429 }
-      );
-    }
-    
-    if (error.message.includes("Missing required parameters")) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json(
-    { error: "Failed to generate test cases. Please try again." },
-    { status: 500 }
-  );
-}
-
-// GET endpoint to check AI configuration status
-export async function GET() {
-  try {
-    return NextResponse.json({
-      configured: true,
-      features: {
-        testGeneration: true,
-        embeddingEnhancement: true,
-        semanticSearch: true,
-      },
-      message: "AI test generation with embedding enhancement is available. Each project must have its own OpenAI API key configured.",
-    });
-  } catch (error) {
-    return NextResponse.json(
-      { error: "Failed to check AI configuration" },
-      { status: 500 }
-    );
-  }
-}
+} 

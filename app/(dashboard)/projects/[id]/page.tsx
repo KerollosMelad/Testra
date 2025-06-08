@@ -64,7 +64,7 @@ export default async function ProjectDetailPage({
                   <GitBranch className="w-3 h-3" />
                   Azure DevOps
                 </Badge>
-                <Badge variant="secondary">{transformedProject.aiModel}</Badge>
+                <Badge variant="secondary">GPT-4o</Badge>
               </div>
               <CardTitle className="text-2xl">
                 {transformedProject.name}
