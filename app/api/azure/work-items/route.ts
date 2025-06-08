@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { WorkItem, WorkItemRelation } from "@/lib/types";
+import { htmlAcceptanceCriteriaToText, cleanUserStoryDescription } from '@/lib/html-to-text';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const organization = searchParams.get("organization");
     const project = searchParams.get("project");
-    const pat = searchParams.get("pat");
+    const token = searchParams.get("token");
     const workItemTypes = searchParams.get("workItemTypes");
 
-    if (!organization || !project || !pat) {
+    if (!organization || !project || !token) {
       return NextResponse.json(
-        { error: "Missing required parameters: organization, project, pat" },
+        { error: "Missing required parameters: organization, project, or token" },
         { status: 400 },
       );
     }
+
+    // Decode the token
+    const decodedToken = Buffer.from(`:${token}`, 'utf8').toString('base64');
 
     // Parse work item types or use default
     const workItemTypesArray = workItemTypes
@@ -41,47 +45,40 @@ export async function GET(request: NextRequest) {
     };
 
     // First, execute the WIQL query to get work item IDs
-    const wiqlUrl = `https://dev.azure.com/${organization}/${project}/_apis/wit/wiql?api-version=7.0`;
-    const wiqlResponse = await fetch(wiqlUrl, {
+    const workItemsUrl = `https://dev.azure.com/${organization}/${project}/_apis/wit/wiql?api-version=7.0`;
+    const wiqlResponse = await fetch(workItemsUrl, {
       method: "POST",
       headers: {
-        Authorization: "Basic " + Buffer.from(":" + pat).toString("base64"),
+        Authorization: `Basic ${decodedToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(wiqlQuery),
     });
 
     if (!wiqlResponse.ok) {
-      return NextResponse.json(
-        { error: "Failed to execute WIQL query" },
-        { status: wiqlResponse.status },
-      );
+      throw new Error(`Azure DevOps API error: ${wiqlResponse.statusText}`);
     }
 
-    const wiqlResult = await wiqlResponse.json();
-    const workItemIds = wiqlResult.workItems?.map((item: any) => item.id) || [];
+    const wiqlData = await wiqlResponse.json();
+    const workItemIds = wiqlData.workItems?.map((wi: any) => wi.id) || [];
 
     if (workItemIds.length === 0) {
       return NextResponse.json({ workItems: [] });
     }
 
     // Fetch detailed work item information with relations
-    const batchUrl = `https://dev.azure.com/${organization}/_apis/wit/workitems?ids=${workItemIds.join(",")}&$expand=relations&api-version=7.0`;
-    const batchResponse = await fetch(batchUrl, {
+    const detailsUrl = `https://dev.azure.com/${organization}/${project}/_apis/wit/workitems?ids=${workItemIds.join(",")}&$expand=relations&api-version=7.0`;
+    const detailsResponse = await fetch(detailsUrl, {
       headers: {
-        Authorization: "Basic " + Buffer.from(":" + pat).toString("base64"),
-        "Content-Type": "application/json",
+        Authorization: `Basic ${decodedToken}`,
       },
     });
 
-    if (!batchResponse.ok) {
-      return NextResponse.json(
-        { error: "Failed to fetch work item details" },
-        { status: batchResponse.status },
-      );
+    if (!detailsResponse.ok) {
+      throw new Error(`Azure DevOps API error: ${detailsResponse.statusText}`);
     }
 
-    const batchResult = await batchResponse.json();
+    const detailsData = await detailsResponse.json();
 
     // Helper function to extract work item ID from URL
     const extractWorkItemId = (url: string): string => {
@@ -102,7 +99,7 @@ export async function GET(request: NextRequest) {
 
     // Create a map for quick lookup of work item details
     const workItemMap = new Map();
-    batchResult.value?.forEach((item: any) => {
+    detailsData.value?.forEach((item: any) => {
       workItemMap.set(item.id.toString(), {
         id: item.id.toString(),
         title: item.fields["System.Title"] || "",
@@ -113,7 +110,7 @@ export async function GET(request: NextRequest) {
 
     // Transform the data to match our interface with relationships
     const workItems: WorkItem[] =
-      batchResult.value?.map((item: any) => {
+      detailsData.value?.map((item: any) => {
         const children: WorkItemRelation[] = [];
         const relatedItems: WorkItemRelation[] = [];
         let parentId: string | undefined;
@@ -157,7 +154,7 @@ export async function GET(request: NextRequest) {
         return {
           id: item.id.toString(),
           title: item.fields["System.Title"] || "",
-          description: item.fields["System.Description"] || "",
+          description: cleanUserStoryDescription(item.fields["System.Description"]) || "",
           workItemType: workItemType as
             | "User Story"
             | "Task"
@@ -167,9 +164,7 @@ export async function GET(request: NextRequest) {
           assignedTo:
             item.fields["System.AssignedTo"]?.displayName || undefined,
           priority: item.fields["Microsoft.VSTS.Common.Priority"] || undefined,
-          acceptanceCriteria:
-            item.fields["Microsoft.VSTS.Common.AcceptanceCriteria"] ||
-            undefined,
+          acceptanceCriteria: htmlAcceptanceCriteriaToText(item.fields["Microsoft.VSTS.Common.AcceptanceCriteria"]) || "",
           tags: item.fields["System.Tags"]
             ? item.fields["System.Tags"]
                 .split(";")

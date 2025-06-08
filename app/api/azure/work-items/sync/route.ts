@@ -1,10 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { createEmbeddingService } from '@/lib/embedding-service';
+import { htmlAcceptanceCriteriaToText, cleanUserStoryDescription } from '@/lib/html-to-text';
+
+interface AzureWorkItem {
+  id: number;
+  fields: {
+    'System.Title': string;
+    'System.Description'?: string;
+    'System.WorkItemType': string;
+    'System.State': string;
+    'System.AssignedTo'?: {
+      displayName: string;
+    };
+    'Microsoft.VSTS.Common.Priority'?: number;
+    'Microsoft.VSTS.Common.AcceptanceCriteria'?: string;
+    'System.Tags'?: string;
+    'System.CreatedDate': string;
+    'System.ChangedDate': string;
+  };
+  relations?: {
+    rel: string;
+    url: string;
+  }[];
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { projectId, organization, project, pat } = body;
+    const { projectId, organization, project, pat, includeEmbeddings = true } = body;
 
     if (!projectId || !organization || !project || !pat) {
       return NextResponse.json({ 
@@ -12,10 +36,10 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // First, fetch the project configuration to get work item types
+    // Get project configuration including OpenAI API key for embeddings
     const { data: projectConfig, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('work_item_types')
+      .select('work_item_types, openai_api_key')
       .eq('id', projectId)
       .single();
 
@@ -27,6 +51,16 @@ export async function POST(request: NextRequest) {
 
     const workItemTypes = projectConfig.work_item_types || ['User Story', 'Task', 'Bug', 'Feature'];
     const workItemTypesString = workItemTypes.map((type: string) => `'${type}'`).join(', ');
+
+    // Initialize embedding service if API key is available
+    let embeddingService = null;
+    if (includeEmbeddings && projectConfig.openai_api_key) {
+      try {
+        embeddingService = createEmbeddingService(projectConfig.openai_api_key);
+      } catch (error) {
+        console.warn('Failed to initialize embedding service:', error);
+      }
+    }
 
     // Delete existing work items that are no longer in the selected types
     const { data: deletedItems, error: deleteError } = await supabaseAdmin
@@ -79,7 +113,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         message: 'No work items found to sync',
         synced: 0,
-        updated: 0
+        updated: 0,
+        embeddingsCreated: 0
       });
     }
 
@@ -106,11 +141,14 @@ export async function POST(request: NextRequest) {
 
     let syncedCount = 0;
     let updatedCount = 0;
+    let embeddingsCreated = 0;
     const workItemRelations: Array<{
       parentAzureId: string;
       childAzureId: string;
       relationType: string;
     }> = [];
+
+    const workItemsNeedingEmbedding: string[] = []; // Store Azure IDs that need embedding
 
     // Process each work item
     for (const item of batchResult.value || []) {
@@ -152,12 +190,12 @@ export async function POST(request: NextRequest) {
       const workItemData = {
         azure_id: azureId,
         title: item.fields['System.Title'] || '',
-        description: item.fields['System.Description'] || null,
+        description: cleanUserStoryDescription(item.fields['System.Description']) || null,
         work_item_type: item.fields['System.WorkItemType'] || '',
         state: item.fields['System.State'] || '',
         assigned_to: item.fields['System.AssignedTo']?.displayName || null,
         priority: item.fields['Microsoft.VSTS.Common.Priority'] || null,
-        acceptance_criteria: item.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || null,
+        acceptance_criteria: htmlAcceptanceCriteriaToText(item.fields['Microsoft.VSTS.Common.AcceptanceCriteria']) || null,
         tags: item.fields['System.Tags'] ? 
           item.fields['System.Tags'].split(';').map((tag: string) => tag.trim()) : 
           null,
@@ -173,6 +211,8 @@ export async function POST(request: NextRequest) {
         .select('id, azure_id, title, description, work_item_type, state, assigned_to, priority, acceptance_criteria, tags, changed_date')
         .eq('azure_id', azureId)
         .single();
+
+      let needsEmbedding = false;
 
       if (existingWorkItem) {
         // Check if anything has actually changed
@@ -196,6 +236,7 @@ export async function POST(request: NextRequest) {
             .update(workItemData)
             .eq('azure_id', azureId);
           updatedCount++;
+          needsEmbedding = true; // Updated items need re-embedding
         }
       } else {
         // Insert new work item
@@ -203,6 +244,12 @@ export async function POST(request: NextRequest) {
           .from('work_items')
           .insert(workItemData);
         syncedCount++;
+        needsEmbedding = true; // New items need embedding
+      }
+
+      // Track items that need embedding
+      if (needsEmbedding && embeddingService) {
+        workItemsNeedingEmbedding.push(azureId);
       }
     }
 
@@ -244,6 +291,36 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Create embeddings for new/updated work items
+    if (embeddingService && workItemsNeedingEmbedding.length > 0) {
+      console.log(`Creating embeddings for ${workItemsNeedingEmbedding.length} work items...`);
+      
+      // Fetch the actual database records for embedding
+      const { data: workItemsForEmbedding, error: fetchError } = await supabaseAdmin
+        .from('work_items')
+        .select('*')
+        .in('azure_id', workItemsNeedingEmbedding);
+
+      if (fetchError) {
+        console.error('Error fetching work items for embedding:', fetchError);
+      } else if (workItemsForEmbedding) {
+        for (const dbWorkItem of workItemsForEmbedding) {
+          try {
+            // Transform database record to WorkItem format expected by embedding service
+            const workItemForEmbedding = transformDatabaseWorkItem(dbWorkItem);
+            await embeddingService.embedWorkItem(workItemForEmbedding);
+            embeddingsCreated++;
+            console.log(`Created embedding for work item ${dbWorkItem.azure_id} (ID: ${dbWorkItem.id})`);
+          } catch (error) {
+            console.error(`Failed to create embedding for work item ${dbWorkItem.azure_id}:`, error);
+            // Continue with other embeddings even if one fails
+          }
+        }
+      }
+      
+      console.log(`Successfully created ${embeddingsCreated} embeddings`);
+    }
+
     // Update project's last sync time
     await supabaseAdmin
       .from('projects')
@@ -256,7 +333,9 @@ export async function POST(request: NextRequest) {
       updated: updatedCount,
       totalProcessed: syncedCount + updatedCount,
       relationsProcessed: workItemRelations.length,
-      deleted: deletedCount
+      deleted: deletedCount,
+      embeddingsCreated,
+      embeddingService: embeddingService ? 'enabled' : 'disabled'
     });
 
   } catch (error) {
@@ -265,4 +344,53 @@ export async function POST(request: NextRequest) {
       error: 'Failed to sync work items from Azure DevOps' 
     }, { status: 500 });
   }
+}
+
+// Helper function to transform Azure work item to our WorkItem format
+function transformToWorkItemFormat(azureItem: any, azureId: string) {
+  return {
+    id: azureId,
+    title: azureItem.fields['System.Title'] || '',
+    description: cleanUserStoryDescription(azureItem.fields['System.Description']) || '',
+    workItemType: azureItem.fields['System.WorkItemType'] || '',
+    state: azureItem.fields['System.State'] || '',
+    assignedTo: azureItem.fields['System.AssignedTo']?.displayName || undefined,
+    priority: azureItem.fields['Microsoft.VSTS.Common.Priority'] || undefined,
+    acceptanceCriteria: htmlAcceptanceCriteriaToText(azureItem.fields['Microsoft.VSTS.Common.AcceptanceCriteria']) || undefined,
+    tags: azureItem.fields['System.Tags'] ? 
+      azureItem.fields['System.Tags'].split(';').map((tag: string) => tag.trim()) : 
+      [],
+    createdDate: azureItem.fields['System.CreatedDate'] || null,
+    changedDate: azureItem.fields['System.ChangedDate'] || null,
+    parentId: undefined,
+    children: [],
+    relatedItems: [],
+    isUserStory: azureItem.fields['System.WorkItemType'] === 'User Story',
+    isTask: azureItem.fields['System.WorkItemType'] === 'Task',
+    hasChildren: false,
+    hasParent: false,
+  };
+}
+
+function transformDatabaseWorkItem(dbWorkItem: any) {
+  return {
+    id: dbWorkItem.id, // Use internal database ID for embeddings
+    title: dbWorkItem.title,
+    description: dbWorkItem.description,
+    workItemType: dbWorkItem.work_item_type,
+    state: dbWorkItem.state,
+    assignedTo: dbWorkItem.assigned_to,
+    priority: dbWorkItem.priority,
+    acceptanceCriteria: dbWorkItem.acceptance_criteria,
+    tags: dbWorkItem.tags,
+    createdDate: dbWorkItem.created_date,
+    changedDate: dbWorkItem.changed_date,
+    parentId: dbWorkItem.parent_work_item_id,
+    children: [],
+    relatedItems: [],
+    isUserStory: dbWorkItem.work_item_type === 'User Story',
+    isTask: dbWorkItem.work_item_type === 'Task',
+    hasChildren: false,
+    hasParent: false,
+  };
 } 

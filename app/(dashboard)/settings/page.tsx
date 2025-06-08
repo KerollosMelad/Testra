@@ -44,20 +44,19 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>AI Configuration</CardTitle>
-            <CardDescription>Configure AI model settings for test generation</CardDescription>
+            <CardDescription>AI test generation powered by GPT-4o</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="aiModel">AI Model</Label>
-              <Select defaultValue="gpt-4">
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="gpt-4">GPT-4 (Recommended)</SelectItem>
-                  <SelectItem value="gpt-3.5-turbo">GPT-3.5 Turbo</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <span className="text-blue-600 font-semibold text-sm">AI</span>
+                </div>
+                <div>
+                  <p className="font-medium text-blue-900">GPT-4o (Active)</p>
+                  <p className="text-sm text-blue-700">Latest AI model with reliable JSON output and superior test generation capabilities</p>
+                </div>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="temperature">Creativity Level</Label>

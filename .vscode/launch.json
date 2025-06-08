@@ -1,0 +1,89 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Next.js: debug server-side",
+        "type": "node-terminal",
+        "request": "launch",
+        "command": "npm run dev"
+      },
+      {
+        "name": "Next.js: debug client-side (Simple)",
+        "type": "chrome",
+        "request": "launch",
+        "url": "http://localhost:3000",
+        "webRoot": "${workspaceFolder}",
+        "sourceMapPathOverrides": {
+          "webpack:///./*": "${webRoot}/*",
+          "webpack://_N_E/./*": "${webRoot}/*",
+          "webpack:///*": "${webRoot}/*"
+        },
+        "smartStep": true,
+        "skipFiles": [
+          "${workspaceFolder}/node_modules/**/*.js",
+          "<node_internals>/**/*.js"
+        ]
+      },
+      {
+        "name": "Next.js: debug client-side (Edge)",
+        "type": "msedge",
+        "request": "launch",
+        "url": "http://localhost:3000",
+        "webRoot": "${workspaceFolder}",
+        "sourceMapPathOverrides": {
+          "webpack:///./*": "${webRoot}/*",
+          "webpack://_N_E/./*": "${webRoot}/*",
+          "webpack:///*": "${webRoot}/*"
+        }
+      },
+      {
+        "name": "Next.js: debug client-side (Firefox)",
+        "type": "firefox",
+        "request": "launch",
+        "url": "http://localhost:3000",
+        "reAttach": true,
+        "pathMappings": [
+          {
+            "url": "webpack://_N_E",
+            "path": "${workspaceFolder}"
+          }
+        ]
+      },
+      {
+        "name": "Next.js: debug server only",
+        "type": "node",
+        "request": "launch",
+        "program": "${workspaceFolder}/node_modules/next/dist/bin/next",
+        "args": ["dev"],
+        "runtimeArgs": ["--inspect"],
+        "skipFiles": ["<node_internals>/**"],
+        "console": "integratedTerminal",
+        "env": {
+          "NODE_OPTIONS": "--inspect"
+        }
+      }
+    ],
+    "compounds": [
+      {
+        "name": "Next.js: debug full stack (Chrome)",
+        "configurations": [
+          "Next.js: debug server only",
+          "Next.js: debug client-side (Simple)"
+        ],
+        "stopAll": true,
+        "presentation": {
+          "hidden": false,
+          "group": "",
+          "order": 1
+        }
+      },
+      {
+        "name": "Next.js: debug full stack (Edge)",
+        "configurations": [
+          "Next.js: debug server only",
+          "Next.js: debug client-side (Edge)"
+        ],
+        "stopAll": true
+      }
+    ]
+  }

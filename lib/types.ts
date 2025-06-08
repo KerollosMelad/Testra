@@ -6,7 +6,7 @@ export interface Project {
   project: string;
   token: string;
   openaiApiKey: string;
-  aiModel: "gpt-4" | "gpt-3.5-turbo";
+  aiModel: "gpt-4o" | "gpt-4o-mini" | "gpt-4-turbo" | "gpt-4-0125-preview" | "gpt-4" | "gpt-3.5-turbo-0125" | "gpt-3.5-turbo";
   temperature: number;
   maxTokens: number;
   autoGeneration: boolean;
@@ -53,7 +53,7 @@ export interface TestCase {
   id: string;
   title: string;
   description: string;
-  type: "unit" | "integration" | "e2e" | "api";
+  type: "unit" | "integration";
   priority: "low" | "medium" | "high";
   status: "draft" | "active" | "deprecated";
   steps: TestStep[];
@@ -112,7 +112,7 @@ export interface TestGenerationContext {
   userStory: WorkItem;
   relatedTasks: WorkItem[];
   existingTestCases: TestCase[];
-  testType: "unit" | "integration" | "e2e" | "api";
+  testType: "unit" | "integration";
   coverageLevel: "basic" | "comprehensive" | "custom";
   customRequirements?: string;
 }

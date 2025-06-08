@@ -36,7 +36,7 @@ import {
   Plus,
 } from "lucide-react";
 import { WorkItem, WorkItemRelation } from "@/lib/types";
-import { TestGenerationDialog } from "@/components/test-generation/test-generation-dialog";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 interface WorkItemsListProps {
@@ -100,11 +100,7 @@ export function WorkItemsList({
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [dataSource, setDataSource] = useState<"database" | "live">("database");
 
-  // Test generation dialog state
-  const [testDialogOpen, setTestDialogOpen] = useState(false);
-  const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItem | null>(
-    null,
-  );
+  const router = useRouter();
 
   // Load hierarchy preference from localStorage after hydration
   useEffect(() => {
@@ -205,6 +201,9 @@ export function WorkItemsList({
 
     setSyncing(true);
     try {
+      // Show initial progress message
+      toast.info("Starting sync from Azure DevOps...", { duration: 2000 });
+
       const response = await fetch("/api/azure/work-items/sync", {
         method: "POST",
         headers: {
@@ -215,6 +214,7 @@ export function WorkItemsList({
           organization,
           project,
           pat: token,
+          includeEmbeddings: true, // Enable automatic embedding creation
         }),
       });
 
@@ -223,9 +223,18 @@ export function WorkItemsList({
       }
 
       const result = await response.json();
+      
+      // Build comprehensive success message
       const deletedText = result.deleted > 0 ? `, ${result.deleted} deleted` : '';
+      const embeddingText = result.embeddingsCreated > 0 
+        ? `, ${result.embeddingsCreated} embeddings created` 
+        : result.embeddingService === 'disabled' 
+          ? ' (embeddings disabled - configure OpenAI API key to enable)' 
+          : '';
+      
       toast.success(
-        `Sync completed: ${result.synced} new, ${result.updated} updated${deletedText}`,
+        `Sync completed: ${result.synced} new, ${result.updated} updated${deletedText}${embeddingText}`,
+        { duration: 5000 }
       );
 
       setDataSource("database");
@@ -514,30 +523,8 @@ export function WorkItemsList({
       toast.error("Project ID is required for test generation");
       return;
     }
-    // Convert TreeNode to WorkItem for the dialog
-    const workItem: WorkItem = {
-      id: node.id,
-      title: node.title,
-      description: node.description,
-      workItemType: node.workItemType,
-      state: node.state,
-      assignedTo: node.assignedTo,
-      priority: node.priority,
-      acceptanceCriteria: node.acceptanceCriteria,
-      tags: node.tags,
-      createdDate: node.createdDate,
-      changedDate: node.changedDate,
-      parentId: node.parentId,
-      children: [], // Empty array for WorkItem children
-      relatedItems: node.relatedItems,
-      isUserStory: node.isUserStory,
-      isTask: node.isTask,
-      hasChildren: node.hasChildren,
-      hasParent: node.hasParent,
-      lastSyncAt: node.lastSyncAt,
-    };
-    setSelectedWorkItem(workItem);
-    setTestDialogOpen(true);
+    // Navigate to the test generation page
+    router.push(`/projects/${projectId}/test-generation/${node.id}`);
   };
 
   if (loading) {
@@ -650,11 +637,12 @@ export function WorkItemsList({
               onClick={syncWorkItems}
               disabled={syncing}
               className="flex items-center gap-1"
+              title="Sync work items from Azure DevOps and create embeddings for AI search"
             >
               <RefreshCw
                 className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`}
               />
-              {syncing ? "Syncing..." : "Sync from Azure"}
+              {syncing ? "Syncing & Embedding..." : "Sync & Embed"}
             </Button>
           )}
         </div>
@@ -744,16 +732,6 @@ export function WorkItemsList({
           </div>
         )}
       </div>
-
-      {/* Test Generation Dialog */}
-      {selectedWorkItem && projectId && (
-        <TestGenerationDialog
-          open={testDialogOpen}
-          onOpenChange={setTestDialogOpen}
-          workItem={selectedWorkItem}
-          projectId={projectId}
-        />
-      )}
     </div>
   );
 }
