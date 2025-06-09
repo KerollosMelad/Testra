@@ -425,7 +425,7 @@ Return your response as a valid JSON object with this exact structure:
       this.buildRelatedTasksSection(relatedTasks),
       this.buildTestRequirementsSection(testType, coverageLevel),
       this.buildExistingTestCasesSection(existingTestCases),
-      this.buildInstructionsSection(testType, coverageLevel)
+      this.buildInstructionsSection(testType, coverageLevel, customRequirements)
     ];
 
     return sections.join('\n\n');
@@ -493,15 +493,15 @@ Similar test cases:
 ${existingTestCases.slice(0, 3).map(tc => `- ${tc.title} (${tc.type})`).join('\n')}`;
   }
 
-  private buildInstructionsSection(testType: string, coverageLevel: string): string {
+  private buildInstructionsSection(testType: string, coverageLevel: string, customRequirements?: string): string {
     if (testType === 'unit') {
-      return this.buildStoryTestInstructions(coverageLevel);
+      return this.buildStoryTestInstructions(coverageLevel, customRequirements);
     } else {
-      return this.buildIntegrationTestInstructions(coverageLevel);
+      return this.buildIntegrationTestInstructions(coverageLevel, customRequirements);
     }
   }
 
-  private buildStoryTestInstructions(coverageLevel: string): string {
+  private buildStoryTestInstructions(coverageLevel: string, customRequirements?: string): string {
     const coverageGuidance = coverageLevel === 'basic'
       ? `**BASIC COVERAGE REQUIREMENTS:**
 - Generate 2-4 essential test cases only
@@ -515,9 +515,33 @@ ${existingTestCases.slice(0, 3).map(tc => `- ${tc.title} (${tc.type})`).join('\n
 - Include multiple positive and negative scenarios
 - Test edge cases, boundary conditions, and error scenarios
 - Include data validation, security, and performance considerations`
+      : coverageLevel === 'custom' && customRequirements
+      ? `**CUSTOM COVERAGE REQUIREMENTS:**
+- Generate test cases ONLY for the following custom requirements
+- Ignore standard acceptance criteria - focus exclusively on custom requirements
+- Custom requirements to test:
+${customRequirements}
+- Generate appropriate number of test cases to thoroughly cover these specific requirements`
       : `**CUSTOM COVERAGE:**
 - Follow the specific custom requirements provided
 - Balance thoroughness with the requested scope`;
+
+    const testScenarioGuidance = coverageLevel === 'custom' && customRequirements
+      ? `**TEST SCENARIO REQUIREMENTS:**
+1. Focus EXCLUSIVELY on the custom requirements specified above
+2. Generate test scenarios that validate only these custom requirements
+3. Include realistic test data and expected outcomes for isolated validation
+4. Provide estimated duration in minutes (typically 5-15 minutes per scenario)
+5. Generate test scenarios (executable steps), NOT test code
+6. Ensure each scenario validates one specific custom requirement
+7. Ignore acceptance criteria - test only the custom requirements`
+      : `**TEST SCENARIO REQUIREMENTS:**
+1. Cover the acceptance criteria thoroughly based on coverage level
+2. Include realistic test data and expected outcomes for isolated user story validation
+3. Provide estimated duration in minutes (typically 5-15 minutes per scenario)
+4. Generate test scenarios (executable steps), NOT test code
+5. Focus solely on the current user story without external dependencies
+6. Ensure each scenario validates one specific behavior or criterion`;
 
     return `**STORY TESTING:**
 - Test ONLY the specific user story functionality in complete isolation
@@ -527,18 +551,12 @@ ${existingTestCases.slice(0, 3).map(tc => `- ${tc.title} (${tc.type})`).join('\n
 
 ${coverageGuidance}
 
-**TEST SCENARIO REQUIREMENTS:**
-1. Cover the acceptance criteria thoroughly based on coverage level
-2. Include realistic test data and expected outcomes for isolated user story validation
-3. Provide estimated duration in minutes (typically 5-15 minutes per scenario)
-4. Generate test scenarios (executable steps), NOT test code
-5. Focus solely on the current user story without external dependencies
-6. Ensure each scenario validates one specific behavior or criterion
+${testScenarioGuidance}
 
 **IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Focus on quality over quantity. Each scenario should validate specific user story behavior in isolation and be executable by the testing team.`;
   }
 
-  private buildIntegrationTestInstructions(coverageLevel: string): string {
+  private buildIntegrationTestInstructions(coverageLevel: string, customRequirements?: string): string {
     const coverageGuidance = coverageLevel === 'basic'
       ? `**BASIC COVERAGE REQUIREMENTS:**
 - Generate 2-4 essential test cases only
@@ -552,9 +570,33 @@ ${coverageGuidance}
 - Include multiple positive and negative scenarios
 - Test edge cases, boundary conditions, and error scenarios
 - Include data validation, security, and performance considerations`
+      : coverageLevel === 'custom' && customRequirements
+      ? `**CUSTOM COVERAGE REQUIREMENTS:**
+- Generate test cases ONLY for the following custom requirements
+- Ignore standard acceptance criteria - focus exclusively on custom requirements
+- Custom requirements to test:
+${customRequirements}
+- Generate appropriate number of test cases to thoroughly cover these specific requirements`
       : `**CUSTOM COVERAGE:**
 - Follow the specific custom requirements provided
 - Balance thoroughness with the requested scope`;
+
+    const testScenarioGuidance = coverageLevel === 'custom' && customRequirements
+      ? `**TEST SCENARIO REQUIREMENTS:**
+1. Focus EXCLUSIVELY on the custom requirements specified above
+2. Generate test scenarios that validate only these custom requirements
+3. Include realistic test data and expected outcomes for integration validation
+4. Provide estimated duration in minutes
+5. Generate test scenarios (executable steps), NOT test code
+6. Ensure each scenario validates one specific custom requirement through integration
+7. Ignore acceptance criteria - test only the custom requirements`
+      : `**TEST SCENARIO REQUIREMENTS:**
+1. Cover the acceptance criteria thoroughly based on coverage level
+2. Include realistic test data and expected outcomes
+3. Provide estimated duration in minutes
+4. Generate test scenarios (executable steps), NOT test code
+5. Build upon related work items and avoid duplicating existing test cases
+6. Ensure each scenario is clear, actionable, and valuable`;
 
     return `**INTEGRATION TESTING:**
 - Test interactions between user stories and system components
@@ -564,13 +606,7 @@ ${coverageGuidance}
 
 ${coverageGuidance}
 
-**TEST SCENARIO REQUIREMENTS:**
-1. Cover the acceptance criteria thoroughly based on coverage level
-2. Include realistic test data and expected outcomes
-3. Provide estimated duration in minutes
-4. Generate test scenarios (executable steps), NOT test code
-5. Build upon related work items and avoid duplicating existing test cases
-6. Ensure each scenario is clear, actionable, and valuable
+${testScenarioGuidance}
 
 **IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Focus on quality over quantity. Each scenario should directly validate the requirements and be executable by the testing team.`;
   }
@@ -674,12 +710,25 @@ Please generate clean, well-commented, and executable test code that follows bes
     } = options;
 
     try {
-      // Parse and chunk acceptance criteria
-      const chunks = await this.analyzeAndChunkAcceptanceCriteria(
-        context.userStory.acceptanceCriteria || '',
-        chunkSize,
-        maxTokensPerChunk
-      );
+      let chunks: AcceptanceCriteriaChunk[] = [];
+
+      // Handle custom requirements differently - don't chunk, use as single item
+      if (context.coverageLevel === 'custom' && context.customRequirements) {
+        chunks = [{
+          id: 'custom-requirements',
+          criteria: [context.customRequirements],
+          originalCriteria: [context.customRequirements],
+          priority: 'high' as const,
+          estimatedTokens: this.estimateTokens(context.customRequirements)
+        }];
+      } else {
+        // Parse and chunk acceptance criteria for standard coverage
+        chunks = await this.analyzeAndChunkAcceptanceCriteria(
+          context.userStory.acceptanceCriteria || '',
+          chunkSize,
+          maxTokensPerChunk
+        );
+      }
 
       let previousTests: TestCase[] = [];
       let previousSummary = '';
@@ -1089,7 +1138,7 @@ Please generate clean, well-commented, and executable test code that follows bes
   }
 
   private buildChunkedPrompt(context: ChunkedGenerationContext): string {
-    const { project, userStory, testType, coverageLevel, currentChunk } = context;
+    const { project, userStory, testType, coverageLevel, currentChunk, customRequirements } = context;
 
     // Build clean, focused prompt
     const sections = [
@@ -1103,13 +1152,13 @@ Please generate clean, well-commented, and executable test code that follows bes
       ``,
       this.buildCleanUserStoryDescription(userStory),
       ``,
-      this.buildAcceptanceCriteriaSection(currentChunk),
+      this.buildAcceptanceCriteriaSection(currentChunk, coverageLevel, customRequirements),
       ``,
       `## Test Requirements`,
       `- **Test Type:** ${testType}`,
       `- **Coverage Level:** ${coverageLevel}`,
       ``,
-      this.buildTestingInstructions(testType, coverageLevel, currentChunk),
+      this.buildTestingInstructions(testType, coverageLevel, currentChunk, customRequirements),
     ];
 
     return sections.filter(section => section !== null).join('\n');
@@ -1130,7 +1179,12 @@ Please generate clean, well-commented, and executable test code that follows bes
     return `**Description:**\n${cleanDescription}`;
   }
 
-  private buildAcceptanceCriteriaSection(chunk?: AcceptanceCriteriaChunk): string {
+  private buildAcceptanceCriteriaSection(chunk?: AcceptanceCriteriaChunk, coverageLevel?: string, customRequirements?: string): string {
+    if (coverageLevel === 'custom' && customRequirements) {
+      return `## Custom Requirements (Focus Area)
+${customRequirements}`;
+    }
+    
     if (!chunk || !chunk.originalCriteria || chunk.originalCriteria.length === 0) {
       return '## Acceptance Criteria\nNo specific acceptance criteria provided for this test generation.';
     }
@@ -1142,17 +1196,57 @@ Please generate clean, well-commented, and executable test code that follows bes
     return `## Acceptance Criteria (Focus Area)\n${criteriaList}`;
   }
 
-  private buildTestingInstructions(testType: string, coverageLevel: string, chunk?: AcceptanceCriteriaChunk): string {
+  private buildTestingInstructions(testType: string, coverageLevel: string, chunk?: AcceptanceCriteriaChunk, customRequirements?: string): string {
     const criteriaCount = chunk?.originalCriteria?.length || 0;
     
     if (testType === 'unit') {
-      return this.buildStoryTestInstructionsForChunk(coverageLevel, criteriaCount);
+      return this.buildStoryTestInstructionsForChunk(coverageLevel, criteriaCount, customRequirements);
     } else {
-      return this.buildIntegrationTestInstructionsForChunk(coverageLevel, criteriaCount);
+      return this.buildIntegrationTestInstructionsForChunk(coverageLevel, criteriaCount, customRequirements);
     }
   }
 
-  private buildStoryTestInstructionsForChunk(coverageLevel: string, criteriaCount: number): string {
+  private buildStoryTestInstructionsForChunk(coverageLevel: string, criteriaCount: number, customRequirements?: string): string {
+    if (coverageLevel === 'custom' && customRequirements) {
+      return `## Testing Instructions
+**STORY TESTING:** Create test scenarios that validate the custom requirements in isolation.
+**CUSTOM COVERAGE:** Generate test cases ONLY for the custom requirements specified above.
+
+**Expected Output:** Test scenarios that directly validate the custom requirements above.
+
+**Test Scenario Requirements:**
+- Each scenario must map to specific custom requirements
+- Focus EXCLUSIVELY on the custom requirements specified
+- Mock or stub external dependencies (APIs, databases, other user stories)
+- Include realistic test data for component validation
+- Provide clear, executable test steps with setup requirements
+- Focus only on the custom requirements - ignore standard acceptance criteria
+- Validate custom requirement behavior independently
+
+**IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Each scenario should be executable by a tester or QA engineer.
+
+**JSON Response Format:** Return your response as a valid JSON object with the structure:
+{
+  "testCases": [
+    {
+      "title": "Test scenario name",
+      "description": "What custom requirement this validates",
+      "type": "unit",
+      "priority": "medium",
+      "steps": [{"step": 1, "action": "...", "expectedOutcome": "...", "testData": {}}],
+      "expectedResult": "Overall outcome",
+      "preconditions": "Setup requirements",
+      "testData": {},
+      "estimatedDuration": 10
+    }
+  ],
+  "suggestions": [],
+  "confidence": 0.9
+}
+
+**Respond with ONLY the JSON object.**`;
+    }
+
     const expectedTests = coverageLevel === 'comprehensive' 
       ? Math.min(12, criteriaCount * 3)
       : Math.min(4, criteriaCount + 1);
@@ -1200,7 +1294,47 @@ ${coverageGuidance}
 **Respond with ONLY the JSON object.**`;
   }
 
-  private buildIntegrationTestInstructionsForChunk(coverageLevel: string, criteriaCount: number): string {
+  private buildIntegrationTestInstructionsForChunk(coverageLevel: string, criteriaCount: number, customRequirements?: string): string {
+    if (coverageLevel === 'custom' && customRequirements) {
+      return `## Testing Instructions
+**INTEGRATION TESTING:** Create test scenarios that validate the custom requirements through system integrations.
+**CUSTOM COVERAGE:** Generate test cases ONLY for the custom requirements specified above.
+
+**Expected Output:** Integration test scenarios that directly validate the custom requirements above.
+
+**Test Scenario Requirements:**
+- Each scenario must map to specific custom requirements
+- Focus EXCLUSIVELY on the custom requirements specified
+- Include realistic end-to-end workflows and data flow for custom requirements
+- Test actual system integrations where appropriate for custom requirements
+- Provide clear, executable test steps
+- Focus only on the custom requirements - ignore standard acceptance criteria
+- Validate complete user journeys and system interactions for custom requirements
+
+**IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Each scenario should validate how the custom requirements integrate with other system components.
+
+**JSON Response Format:** Return your response as a valid JSON object with the structure:
+{
+  "testCases": [
+    {
+      "title": "Test scenario name",
+      "description": "What custom requirement integration this validates",
+      "type": "integration",
+      "priority": "medium",
+      "steps": [{"step": 1, "action": "...", "expectedOutcome": "...", "testData": {}}],
+      "expectedResult": "Overall outcome",
+      "preconditions": "Setup requirements",
+      "testData": {},
+      "estimatedDuration": 15
+    }
+  ],
+  "suggestions": [],
+  "confidence": 0.9
+}
+
+**Respond with ONLY the JSON object.**`;
+    }
+
     const expectedTests = coverageLevel === 'comprehensive' 
       ? Math.min(12, criteriaCount * 3)
       : Math.min(4, criteriaCount + 1);

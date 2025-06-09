@@ -12,6 +12,7 @@ import { Loader2, Sparkles, CheckCircle, AlertCircle, Code, FileText, Zap, Pause
 import { WorkItem } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 interface StreamingTestCase {
   title: string;
@@ -499,60 +500,103 @@ export default function TestGenerationPage() {
           </Card>
 
           {/* Streaming Results */}
-          <div className="space-y-6">
+          <Accordion type="multiple" className="space-y-4" defaultValue={chunks.map(chunk => chunk.chunkId)}>
             {chunks.map((chunk, chunkIndex) => (
-              <div key={chunk.chunkId} className="space-y-4">
-                {/* Acceptance Criteria Header */}
-                <Card className="border-l-4 border-l-blue-500 bg-blue-50">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg text-blue-900">
-                      Chunk {chunk.currentChunkIndex + 1} - Acceptance Criteria
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <ul className="space-y-2">
-                      {chunk.acceptanceCriteria.map((criteria, index) => (
-                        <li key={index} className="text-blue-800 flex items-start gap-2">
-                          <span className="text-blue-600 mt-1">•</span>
-                          <span>{criteria}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                </Card>
-
-                {/* Test Cases for this chunk */}
-                <div className="grid gap-4">
-                  {chunk.testCases.map((testCase, testIndex) => (
-                    <Card key={`${chunk.chunkId}-${testIndex}`} className="border-l-4 border-l-green-500">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-3">
-                              {getTypeIcon(testCase.type)}
-                              <Badge variant="outline">{testCase.type}</Badge>
-                              <Badge className={getPriorityColor(testCase.priority)}>
-                                {testCase.priority}
-                              </Badge>
-                              {testCase.estimatedDuration && (
-                                <Badge variant="secondary">
-                                  ~{testCase.estimatedDuration}min
-                                </Badge>
-                              )}
-                            </div>
-                            <CardTitle className="text-lg">{testCase.title}</CardTitle>
-                            <CardDescription className="mt-2">{testCase.description}</CardDescription>
-                          </div>
+              <AccordionItem key={chunk.chunkId} value={chunk.chunkId} className="border border-gray-200 rounded-lg">
+                <AccordionTrigger className="px-6 py-4 text-left hover:no-underline">
+                  <div className="flex flex-col gap-3 w-full mr-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Badge variant="secondary">Chunk {chunk.currentChunkIndex + 1}</Badge>
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-gray-500" />
+                          <span className="text-sm font-medium">
+                            {chunk.acceptanceCriteria.length} criteria
+                          </span>
                         </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          {chunk.testCases.length} tests
+                        </Badge>
+                        {chunk.confidence && (
+                          <Badge variant="secondary" className="text-xs">
+                            {Math.round(chunk.confidence * 100)}% confidence
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-left">
+                      <div className="text-sm text-gray-600 space-y-1">
+                        {chunk.acceptanceCriteria.slice(0, 2).map((criteria, index) => (
+                          <div key={index} className="flex items-start gap-2">
+                            <span className="text-gray-400 mt-0.5">•</span>
+                            <span className="line-clamp-2">{criteria}</span>
+                          </div>
+                        ))}
+                        {chunk.acceptanceCriteria.length > 2 && (
+                          <div className="text-xs text-gray-400 mt-1">
+                            +{chunk.acceptanceCriteria.length - 2} more criteria...
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </AccordionTrigger>
+                
+                <AccordionContent className="px-6 pb-6">
+                  <div className="space-y-6">
+                    {/* Acceptance Criteria Header */}
+                    <Card className="border-l-4 border-l-blue-500 bg-blue-50">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-lg text-blue-900">
+                          Acceptance Criteria
+                        </CardTitle>
                       </CardHeader>
+                      <CardContent>
+                        <ul className="space-y-2">
+                          {chunk.acceptanceCriteria.map((criteria, index) => (
+                            <li key={index} className="text-blue-800 flex items-start gap-2">
+                              <span className="text-blue-600 mt-1">•</span>
+                              <span>{criteria}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </CardContent>
                     </Card>
-                  ))}
-                </div>
 
-                {chunkIndex < chunks.length - 1 && <Separator className="my-6" />}
-              </div>
+                    {/* Test Cases for this chunk */}
+                    <div className="grid gap-4">
+                      {chunk.testCases.map((testCase, testIndex) => (
+                        <Card key={`${chunk.chunkId}-${testIndex}`} className="border-l-4 border-l-green-500">
+                          <CardHeader className="pb-3">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-3">
+                                  {getTypeIcon(testCase.type)}
+                                  <Badge variant="outline">{testCase.type}</Badge>
+                                  <Badge className={getPriorityColor(testCase.priority)}>
+                                    {testCase.priority}
+                                  </Badge>
+                                  {testCase.estimatedDuration && (
+                                    <Badge variant="secondary">
+                                      ~{testCase.estimatedDuration}min
+                                    </Badge>
+                                  )}
+                                </div>
+                                <CardTitle className="text-lg">{testCase.title}</CardTitle>
+                                <CardDescription className="mt-2">{testCase.description}</CardDescription>
+                              </div>
+                            </div>
+                          </CardHeader>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
             ))}
-          </div>
+          </Accordion>
         </div>
       )}
 
@@ -590,97 +634,140 @@ export default function TestGenerationPage() {
           )}
 
           {/* Final Results organized by chunks */}
-          <div className="space-y-8">
+          <Accordion type="multiple" className="space-y-4" defaultValue={chunks.map(chunk => chunk.chunkId)}>
             {chunks.map((chunk, chunkIndex) => (
-              <div key={chunk.chunkId} className="space-y-4">
-                {/* Acceptance Criteria Header */}
-                <Card className="border-l-4 border-l-blue-500 bg-blue-50">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg text-blue-900">
-                      Acceptance Criteria - Chunk {chunk.currentChunkIndex + 1}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <ul className="space-y-2">
-                      {chunk.acceptanceCriteria.map((criteria, index) => (
-                        <li key={index} className="text-blue-800 flex items-start gap-2">
-                          <span className="text-blue-600 mt-1">•</span>
-                          <span>{criteria}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                </Card>
-
-                {/* Test Cases for this chunk */}
-                <div className="grid gap-6">
-                  {chunk.testCases.map((testCase, testIndex) => (
-                    <Card key={`${chunk.chunkId}-${testIndex}`}>
-                      <CardHeader className="pb-4">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-3">
-                              {getTypeIcon(testCase.type)}
-                              <Badge variant="outline">{testCase.type}</Badge>
-                              <Badge className={getPriorityColor(testCase.priority)}>
-                                {testCase.priority}
-                              </Badge>
-                              {testCase.estimatedDuration && (
-                                <Badge variant="secondary">
-                                  ~{testCase.estimatedDuration}min
-                                </Badge>
-                              )}
-                            </div>
-                            <CardTitle className="text-lg">{testCase.title}</CardTitle>
-                            <CardDescription className="mt-2">{testCase.description}</CardDescription>
-                          </div>
+              <AccordionItem key={chunk.chunkId} value={chunk.chunkId} className="border border-gray-200 rounded-lg">
+                <AccordionTrigger className="px-6 py-4 text-left hover:no-underline">
+                  <div className="flex flex-col gap-3 w-full mr-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Badge variant="secondary">Chunk {chunk.currentChunkIndex + 1}</Badge>
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-gray-500" />
+                          <span className="text-sm font-medium">
+                            {chunk.acceptanceCriteria.length} criteria
+                          </span>
                         </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          {chunk.testCases.length} tests
+                        </Badge>
+                        {chunk.confidence && (
+                          <Badge variant="secondary" className="text-xs">
+                            {Math.round(chunk.confidence * 100)}% confidence
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-left">
+                      <div className="text-sm text-gray-600 space-y-1">
+                        {chunk.acceptanceCriteria.slice(0, 2).map((criteria, index) => (
+                          <div key={index} className="flex items-start gap-2">
+                            <span className="text-gray-400 mt-0.5">•</span>
+                            <span className="line-clamp-2">{criteria}</span>
+                          </div>
+                        ))}
+                        {chunk.acceptanceCriteria.length > 2 && (
+                          <div className="text-xs text-gray-400 mt-1">
+                            +{chunk.acceptanceCriteria.length - 2} more criteria...
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </AccordionTrigger>
+                
+                <AccordionContent className="px-6 pb-6">
+                  <div className="space-y-6">
+                    {/* Acceptance Criteria Header */}
+                    <Card className="border-l-4 border-l-blue-500 bg-blue-50">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-lg text-blue-900">
+                          Acceptance Criteria
+                        </CardTitle>
                       </CardHeader>
-                      
-                      <CardContent className="space-y-4">
-                        {testCase.preconditions && (
-                          <div>
-                            <Label className="text-sm font-semibold">Preconditions:</Label>
-                            <p className="text-sm text-gray-600 mt-1">{testCase.preconditions}</p>
-                          </div>
-                        )}
-                        
-                        <div>
-                          <Label className="text-sm font-semibold">Test Steps:</Label>
-                          <ol className="mt-2 space-y-2">
-                            {testCase.steps.map((step, stepIndex) => (
-                              <li key={stepIndex} className="text-sm border-l-2 border-gray-200 pl-4">
-                                <span className="font-medium">{step.step}.</span> {step.action}
-                                <div className="text-xs text-gray-500 mt-1">
-                                  <strong>Expected:</strong> {step.expectedOutcome}
-                                </div>
-                              </li>
-                            ))}
-                          </ol>
-                        </div>
-
-                        <div>
-                          <Label className="text-sm font-semibold">Expected Result:</Label>
-                          <p className="text-sm text-gray-600 mt-1">{testCase.expectedResult}</p>
-                        </div>
-
-                        {testCase.generatedCode && (
-                          <div>
-                            <Label className="text-sm font-semibold">Generated Code:</Label>
-                            <pre className="text-xs bg-gray-100 p-3 rounded-md mt-2 overflow-x-auto">
-                              {testCase.generatedCode}
-                            </pre>
-                          </div>
-                        )}
+                      <CardContent>
+                        <ul className="space-y-2">
+                          {chunk.acceptanceCriteria.map((criteria, index) => (
+                            <li key={index} className="text-blue-800 flex items-start gap-2">
+                              <span className="text-blue-600 mt-1">•</span>
+                              <span>{criteria}</span>
+                            </li>
+                          ))}
+                        </ul>
                       </CardContent>
                     </Card>
-                  ))}
-                </div>
 
-                {chunkIndex < chunks.length - 1 && <Separator className="my-8" />}
-              </div>
+                    {/* Test Cases for this chunk */}
+                    <div className="grid gap-6">
+                      {chunk.testCases.map((testCase, testIndex) => (
+                        <Card key={`${chunk.chunkId}-${testIndex}`}>
+                          <CardHeader className="pb-4">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-3">
+                                  {getTypeIcon(testCase.type)}
+                                  <Badge variant="outline">{testCase.type}</Badge>
+                                  <Badge className={getPriorityColor(testCase.priority)}>
+                                    {testCase.priority}
+                                  </Badge>
+                                  {testCase.estimatedDuration && (
+                                    <Badge variant="secondary">
+                                      ~{testCase.estimatedDuration}min
+                                    </Badge>
+                                  )}
+                                </div>
+                                <CardTitle className="text-lg">{testCase.title}</CardTitle>
+                                <CardDescription className="mt-2">{testCase.description}</CardDescription>
+                              </div>
+                            </div>
+                          </CardHeader>
+                          
+                          <CardContent className="space-y-4">
+                            {testCase.preconditions && (
+                              <div>
+                                <Label className="text-sm font-semibold">Preconditions:</Label>
+                                <p className="text-sm text-gray-600 mt-1">{testCase.preconditions}</p>
+                              </div>
+                            )}
+                            
+                            <div>
+                              <Label className="text-sm font-semibold">Test Steps:</Label>
+                              <ol className="mt-2 space-y-2">
+                                {testCase.steps.map((step, stepIndex) => (
+                                  <li key={stepIndex} className="text-sm border-l-2 border-gray-200 pl-4">
+                                    <span className="font-medium">{step.step}.</span> {step.action}
+                                    <div className="text-xs text-gray-500 mt-1">
+                                      <strong>Expected:</strong> {step.expectedOutcome}
+                                    </div>
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+
+                            <div>
+                              <Label className="text-sm font-semibold">Expected Result:</Label>
+                              <p className="text-sm text-gray-600 mt-1">{testCase.expectedResult}</p>
+                            </div>
+
+                            {testCase.generatedCode && (
+                              <div>
+                                <Label className="text-sm font-semibold">Generated Code:</Label>
+                                <pre className="text-xs bg-gray-100 p-3 rounded-md mt-2 overflow-x-auto">
+                                  {testCase.generatedCode}
+                                </pre>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
             ))}
-          </div>
+          </Accordion>
 
           {/* Action Buttons */}
           <div className="flex justify-center gap-4 pt-6">
