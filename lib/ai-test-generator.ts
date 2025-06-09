@@ -889,7 +889,7 @@ Please generate clean, well-commented, and executable test code that follows bes
     }
 
     return items
-      .map(item => item.trim())
+      .map(item => this.cleanCriteriaText(item.trim()))
       .filter(item => item.length > 5)
       .slice(0, 15); // Reasonable limit
   }
@@ -946,6 +946,26 @@ Please generate clean, well-commented, and executable test code that follows bes
     const wordsB = textB.split(/\s+/).filter(w => w.length > 2 && !commonWords.includes(w));
     
     return wordsA.filter(word => wordsB.includes(word));
+  }
+
+  private cleanCriteriaText(text: string): string {
+    if (!text) return text;
+    
+    // Remove trailing numbers that are likely from next criteria (e.g., "text. 2." -> "text.")
+    let cleaned = text.replace(/\.\s*\d+\.\s*$/, '.');
+    
+    // Remove standalone trailing numbers (e.g., "text 2." -> "text.")
+    cleaned = cleaned.replace(/\s+\d+\.\s*$/, '.');
+    
+    // Remove trailing periods followed by spaces and numbers
+    cleaned = cleaned.replace(/\.\s+\d+\s*$/, '.');
+    
+    // Ensure it ends with a period if it's a complete sentence
+    if (!cleaned.endsWith('.') && !cleaned.endsWith('!') && !cleaned.endsWith('?')) {
+      cleaned += '.';
+    }
+    
+    return cleaned.trim();
   }
 
   private createOptimalChunks(
