@@ -287,38 +287,38 @@ export class AITestGenerator {
   }
 
   private getStoryTestSystemPrompt(): string {
-    return `You are an expert test case designer specializing in creating detailed test scenarios.
+    return `You are an expert QA test designer specializing in creating manual test scenarios for business users.
 
-**IMPORTANT: You generate TEST SCENARIOS, not test code.**
+**IMPORTANT: You generate BUSINESS-FOCUSED TEST SCENARIOS for manual execution by QC testers.**
 
-Your task is to create story test scenarios that thoroughly validate individual user story functionality.
+Your task is to create test scenarios that validate individual user story functionality from a business user perspective.
 
 ## What "Story Testing" Means:
-- Test scenarios that focus on ONE user story in isolation
-- Validate all acceptance criteria for that specific user story  
-- Mock or stub external dependencies and related user stories
-- Focus on the user story's internal logic and behavior
-- Ensure the user story works correctly by itself
+- Test scenarios that focus on ONE user story's business functionality
+- Validate all acceptance criteria from a user's perspective
+- Test the user story as if external systems work correctly
+- Focus on the user story's business value and behavior
+- Ensure the feature works as intended by business stakeholders
 
 ## Expected Output Format:
 For each test scenario, provide:
 
-**Test Scenario Title:** [Clear, descriptive title]
-**Description:** [What this scenario validates]
-**Preconditions:** [Setup requirements, mocked dependencies]
-**Test Steps:** [Numbered steps to execute]
-**Expected Results:** [What should happen at each step]
+**Test Scenario Title:** [Clear, business-focused title]
+**Description:** [What business functionality this validates]
+**Preconditions:** [Required system state and test data setup]
+**Test Steps:** [Numbered user actions and system interactions]
+**Expected Results:** [What the user should observe]
 
 ## Requirements:
-- Generate TEST SCENARIOS, not code
+- Generate MANUAL TEST SCENARIOS in business language
 - Each scenario should map directly to acceptance criteria
-- Include realistic test data and user interactions
-- Specify what external dependencies need to be mocked
-- Focus on user story behavior in isolation
-- Provide clear, executable test steps
-- Validate user story functionality thoroughly
+- Use business terms and user actions, not technical implementation
+- Focus on user workflows and expected business outcomes
+- Assume all external systems and dependencies work correctly
+- Write steps that a business user or QC tester can execute
+- Validate user story functionality from an end-user perspective
 
-**DO NOT generate story test code - generate test scenarios that can be executed manually or automated later.**
+**DO NOT include technical details like mocking, APIs, or implementation specifics.**
 
 ## JSON Response Format:
 Return your response as a valid JSON object with this exact structure:
@@ -352,38 +352,38 @@ Return your response as a valid JSON object with this exact structure:
   }
 
   private getIntegrationTestSystemPrompt(): string {
-    return `You are an expert test case designer specializing in creating detailed integration test scenarios.
+    return `You are an expert QA test designer specializing in creating end-to-end test scenarios for business workflows.
 
-**IMPORTANT: You generate TEST SCENARIOS, not test code.**
+**IMPORTANT: You generate BUSINESS-FOCUSED END-TO-END TEST SCENARIOS for manual execution by QC testers.**
 
-Your task is to create integration test scenarios that validate interactions between user stories and system components.
+Your task is to create integration test scenarios that validate complete business workflows and user journeys.
 
 ## What "Integration Testing" Means:
-- Test scenarios that validate interactions between multiple user stories
-- Test data flow and communication between system components
-- Validate end-to-end workflows that span multiple user stories
-- Test real system integrations (APIs, databases, external services)
-- Ensure user stories work together correctly
+- Test scenarios that validate complete business processes
+- Test end-to-end user workflows across multiple features
+- Validate that different parts of the system work together seamlessly
+- Test realistic business scenarios and user journeys
+- Ensure complete business value is delivered through integrated features
 
 ## Expected Output Format:
 For each test scenario, provide:
 
-**Test Scenario Title:** [Clear, descriptive title]
-**Description:** [What integration this scenario validates]
-**Preconditions:** [Setup requirements, data dependencies]
-**Test Steps:** [Numbered steps to execute]
-**Expected Results:** [What should happen at each step]
+**Test Scenario Title:** [Clear, business workflow title]
+**Description:** [What business process this validates]
+**Preconditions:** [Required business setup and test data]
+**Test Steps:** [Numbered user actions across the business workflow]
+**Expected Results:** [What the business user should observe]
 
 ## Requirements:
-- Generate TEST SCENARIOS, not code
-- Focus on interactions between user stories and components
-- Include realistic end-to-end workflows
-- Test actual system integrations where possible
-- Validate data consistency across components
-- Provide clear, executable test steps
-- Test complete user journeys and workflows
+- Generate END-TO-END BUSINESS TEST SCENARIOS in user-friendly language
+- Focus on complete business workflows and user journeys
+- Include realistic business scenarios and user interactions
+- Test how different features work together from a user perspective
+- Validate complete business value delivery
+- Write steps that simulate real user behavior and business processes
+- Test cross-functional workflows and integrations
 
-**DO NOT generate integration test code - generate test scenarios that validate system integrations and user story interactions.**
+**DO NOT include technical details like APIs, databases, or system architecture specifics.**
 
 ## JSON Response Format:
 Return your response as a valid JSON object with this exact structure:

@@ -13,6 +13,7 @@ import { WorkItem } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface StreamingTestCase {
   title: string;
@@ -69,6 +70,12 @@ export default function TestGenerationPage() {
   const [totalTestCases, setTotalTestCases] = useState(0);
   const [allSuggestions, setAllSuggestions] = useState<string[]>([]);
   const [finalConfidence, setFinalConfidence] = useState(0);
+  
+  // Selection state
+  const [selectedTestCases, setSelectedTestCases] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -230,6 +237,96 @@ export default function TestGenerationPage() {
       abortControllerRef.current.abort();
     }
     router.back();
+  };
+
+  // Helper function to generate unique test case ID
+  const getTestCaseId = (chunkId: string, testIndex: number) => {
+    return `${chunkId}-${testIndex}`;
+  };
+
+  // Helper function to get all test cases with IDs
+  const getAllTestCasesWithIds = () => {
+    const allTestCases: Array<StreamingTestCase & { testCaseId: string }> = [];
+    chunks.forEach((chunk) => {
+      chunk.testCases.forEach((testCase, index) => {
+        allTestCases.push({
+          ...testCase,
+          testCaseId: getTestCaseId(chunk.chunkId, index)
+        });
+      });
+    });
+    return allTestCases;
+  };
+
+  // Selection handlers
+  const handleTestCaseSelect = (testCaseId: string, checked: boolean) => {
+    setSelectedTestCases(prev => {
+      const newSet = new Set(prev);
+      if (checked) {
+        newSet.add(testCaseId);
+      } else {
+        newSet.delete(testCaseId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    const allTestCases = getAllTestCasesWithIds();
+    setSelectedTestCases(new Set(allTestCases.map(tc => tc.testCaseId)));
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedTestCases(new Set());
+  };
+
+  // Save selected test cases to Azure DevOps
+  const handleSaveSelected = async () => {
+    if (selectedTestCases.size === 0) {
+      setSaveError('Please select at least one test case to save.');
+      return;
+    }
+
+    setSaving(true);
+    setSaveError(null);
+    setSaveSuccess(false);
+
+    try {
+      const allTestCases = getAllTestCasesWithIds();
+      const selectedTestCasesData = allTestCases.filter(tc => 
+        selectedTestCases.has(tc.testCaseId)
+      );
+
+      const response = await fetch('/api/azure/test-cases/save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId,
+          workItemId: workItem?.id,
+          testCases: selectedTestCasesData,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to save test cases');
+      }
+
+      const result = await response.json();
+      setSaveSuccess(true);
+      
+      // Clear selections after successful save
+      setSelectedTestCases(new Set());
+      
+      console.log('Test cases saved successfully:', result);
+    } catch (error: any) {
+      console.error('Error saving test cases:', error);
+      setSaveError(error.message || 'Failed to save test cases to Azure DevOps');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const getTestTypeDescription = (type: string) => {
@@ -567,36 +664,124 @@ export default function TestGenerationPage() {
 
                     {/* Test Cases for this chunk */}
                     <div className="grid gap-4">
-                      {chunk.testCases.map((testCase, testIndex) => (
-                        <Card key={`${chunk.chunkId}-${testIndex}`} className="border-l-4 border-l-green-500">
-                          <CardHeader className="pb-3">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-3">
-                                  {getTypeIcon(testCase.type)}
-                                  <Badge variant="outline">{testCase.type}</Badge>
-                                  <Badge className={getPriorityColor(testCase.priority)}>
-                                    {testCase.priority}
-                                  </Badge>
-                                  {testCase.estimatedDuration && (
-                                    <Badge variant="secondary">
-                                      ~{testCase.estimatedDuration}min
-                                    </Badge>
-                                  )}
+                      {chunk.testCases.map((testCase, testIndex) => {
+                        const testCaseId = getTestCaseId(chunk.chunkId, testIndex);
+                        const isSelected = selectedTestCases.has(testCaseId);
+                        
+                        return (
+                          <Card key={`${chunk.chunkId}-${testIndex}`} className={`border-l-4 border-l-green-500 ${isSelected ? 'ring-2 ring-blue-500' : ''}`}>
+                            <CardHeader className="pb-3">
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-start gap-3 flex-1">
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onCheckedChange={(checked) => 
+                                      handleTestCaseSelect(testCaseId, checked as boolean)
+                                    }
+                                    className="mt-1"
+                                  />
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-3">
+                                      {getTypeIcon(testCase.type)}
+                                      <Badge variant="outline">{testCase.type}</Badge>
+                                      <Badge className={getPriorityColor(testCase.priority)}>
+                                        {testCase.priority}
+                                      </Badge>
+                                      {testCase.estimatedDuration && (
+                                        <Badge variant="secondary">
+                                          ~{testCase.estimatedDuration}min
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <CardTitle className="text-lg">{testCase.title}</CardTitle>
+                                    <CardDescription className="mt-2">{testCase.description}</CardDescription>
+                                  </div>
                                 </div>
-                                <CardTitle className="text-lg">{testCase.title}</CardTitle>
-                                <CardDescription className="mt-2">{testCase.description}</CardDescription>
                               </div>
-                            </div>
-                          </CardHeader>
-                        </Card>
-                      ))}
+                            </CardHeader>
+                          </Card>
+                        );
+                      })}
                     </div>
                   </div>
                 </AccordionContent>
               </AccordionItem>
             ))}
           </Accordion>
+
+          {/* Selection Controls for Streaming Results */}
+          {chunks.length > 0 && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Save Test Cases to Azure DevOps</CardTitle>
+                    <CardDescription>
+                      Select test cases to save as work items in Azure DevOps
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Badge variant="secondary">
+                      {selectedTestCases.size} of {totalTestCases} selected
+                    </Badge>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleSelectAll}
+                    disabled={selectedTestCases.size === totalTestCases}
+                  >
+                    Select All
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleDeselectAll}
+                    disabled={selectedTestCases.size === 0}
+                  >
+                    Deselect All
+                  </Button>
+                  <Button 
+                    onClick={handleSaveSelected}
+                    disabled={selectedTestCases.size === 0 || saving}
+                    className="ml-auto"
+                  >
+                    {saving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Save Selected to Azure
+                      </>
+                    )}
+                  </Button>
+                </div>
+                
+                {saveError && (
+                  <Alert className="mt-4" variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{saveError}</AlertDescription>
+                  </Alert>
+                )}
+                
+                {saveSuccess && (
+                  <Alert className="mt-4">
+                    <CheckCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      Test cases saved successfully to Azure DevOps!
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
@@ -608,7 +793,7 @@ export default function TestGenerationPage() {
                 <div className="flex items-center gap-3">
                   <CheckCircle className="w-6 h-6 text-green-600" />
                   <div>
-                    <CardTitle>Generated {allTestCases.length} Test Cases</CardTitle>
+                    <CardTitle>Generated {totalTestCases} Test Cases</CardTitle>
                     <CardDescription>Test case generation completed successfully</CardDescription>
                   </div>
                 </div>
@@ -701,28 +886,41 @@ export default function TestGenerationPage() {
 
                     {/* Test Cases for this chunk */}
                     <div className="grid gap-6">
-                      {chunk.testCases.map((testCase, testIndex) => (
-                        <Card key={`${chunk.chunkId}-${testIndex}`}>
-                          <CardHeader className="pb-4">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-3">
-                                  {getTypeIcon(testCase.type)}
-                                  <Badge variant="outline">{testCase.type}</Badge>
-                                  <Badge className={getPriorityColor(testCase.priority)}>
-                                    {testCase.priority}
-                                  </Badge>
-                                  {testCase.estimatedDuration && (
-                                    <Badge variant="secondary">
-                                      ~{testCase.estimatedDuration}min
-                                    </Badge>
-                                  )}
+                      {chunk.testCases.map((testCase, testIndex) => {
+                        const testCaseId = getTestCaseId(chunk.chunkId, testIndex);
+                        const isSelected = selectedTestCases.has(testCaseId);
+                        
+                        return (
+                          <Card key={`${chunk.chunkId}-${testIndex}`} className={isSelected ? 'ring-2 ring-blue-500' : ''}>
+                            <CardHeader className="pb-4">
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-start gap-3 flex-1">
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onCheckedChange={(checked) => 
+                                      handleTestCaseSelect(testCaseId, checked as boolean)
+                                    }
+                                    className="mt-1"
+                                  />
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-3">
+                                      {getTypeIcon(testCase.type)}
+                                      <Badge variant="outline">{testCase.type}</Badge>
+                                      <Badge className={getPriorityColor(testCase.priority)}>
+                                        {testCase.priority}
+                                      </Badge>
+                                      {testCase.estimatedDuration && (
+                                        <Badge variant="secondary">
+                                          ~{testCase.estimatedDuration}min
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <CardTitle className="text-lg">{testCase.title}</CardTitle>
+                                    <CardDescription className="mt-2">{testCase.description}</CardDescription>
+                                  </div>
                                 </div>
-                                <CardTitle className="text-lg">{testCase.title}</CardTitle>
-                                <CardDescription className="mt-2">{testCase.description}</CardDescription>
                               </div>
-                            </div>
-                          </CardHeader>
+                            </CardHeader>
                           
                           <CardContent className="space-y-4">
                             {testCase.preconditions && (
@@ -761,7 +959,8 @@ export default function TestGenerationPage() {
                             )}
                           </CardContent>
                         </Card>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </AccordionContent>
@@ -769,13 +968,82 @@ export default function TestGenerationPage() {
             ))}
           </Accordion>
 
+          {/* Selection Controls */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Save Test Cases to Azure DevOps</CardTitle>
+                  <CardDescription>
+                    Select test cases to save as work items in Azure DevOps
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Badge variant="secondary">
+                    {selectedTestCases.size} of {totalTestCases} selected
+                  </Badge>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleSelectAll}
+                  disabled={selectedTestCases.size === totalTestCases}
+                >
+                  Select All
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleDeselectAll}
+                  disabled={selectedTestCases.size === 0}
+                >
+                  Deselect All
+                </Button>
+                <Button 
+                  onClick={handleSaveSelected}
+                  disabled={selectedTestCases.size === 0 || saving}
+                  className="ml-auto"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      Save Selected to Azure
+                    </>
+                  )}
+                </Button>
+              </div>
+              
+              {saveError && (
+                <Alert className="mt-4" variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{saveError}</AlertDescription>
+                </Alert>
+              )}
+              
+              {saveSuccess && (
+                <Alert className="mt-4">
+                  <CheckCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    Test cases saved successfully to Azure DevOps!
+                  </AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Action Buttons */}
           <div className="flex justify-center gap-4 pt-6">
             <Button variant="outline" size="lg" onClick={() => setStep('configure')}>
               Generate More
-            </Button>
-            <Button size="lg">
-              Save Test Cases
             </Button>
           </div>
         </div>

@@ -1,0 +1,294 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/supabase';
+
+interface TestCaseStep {
+  step: number;
+  action: string;
+  expectedOutcome: string;
+  testData?: Record<string, any>;
+}
+
+interface TestCaseToSave {
+  title: string;
+  description: string;
+  type: 'unit' | 'integration';
+  priority: 'low' | 'medium' | 'high';
+  steps: TestCaseStep[];
+  expectedResult: string;
+  preconditions?: string;
+  testData?: Record<string, any>;
+  estimatedDuration?: number;
+  generatedCode?: string;
+  coveredCriteria?: string[];
+  chunkId?: string;
+  testCaseId: string;
+}
+
+interface SaveTestCasesRequest {
+  projectId: string;
+  workItemId: string;
+  testCases: TestCaseToSave[];
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json() as SaveTestCasesRequest;
+    const { projectId, workItemId, testCases } = body;
+
+    if (!projectId || !workItemId || !testCases || testCases.length === 0) {
+      return NextResponse.json(
+        { error: 'Missing required parameters: projectId, workItemId, or testCases' },
+        { status: 400 }
+      );
+    }
+
+    // Get project details for Azure DevOps connection
+    const { data: project, error: projectError } = await supabaseAdmin
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (projectError || !project) {
+      return NextResponse.json(
+        { error: 'Project not found or invalid' },
+        { status: 404 }
+      );
+    }
+
+    // Get work item details to use as parent
+    const { data: workItem, error: workItemError } = await supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .eq('azure_id', workItemId)
+      .single();
+
+    if (workItemError || !workItem) {
+      return NextResponse.json(
+        { error: 'Work item not found' },
+        { status: 404 }
+      );
+    }
+
+    const createdTestCases = [];
+    const errors = [];
+
+    // Create test cases in Azure DevOps
+    for (const testCase of testCases) {
+      try {
+        const azureTestCase = await createTestCaseInAzure(project, workItem, testCase);
+        
+        // Save test case to local database
+        const savedTestCase = await saveTestCaseToDatabase(projectId, workItemId, testCase, azureTestCase.id);
+        
+        createdTestCases.push({
+          localId: savedTestCase.id,
+          azureId: azureTestCase.id,
+          title: testCase.title
+        });
+      } catch (error: any) {
+        console.error(`Error creating test case "${testCase.title}":`, error);
+        errors.push({
+          title: testCase.title,
+          error: error.message || 'Failed to create test case'
+        });
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      created: createdTestCases.length,
+      errors: errors.length,
+      testCases: createdTestCases,
+      failedTestCases: errors
+    });
+
+  } catch (error) {
+    console.error('Error saving test cases:', error);
+    return NextResponse.json(
+      { error: 'Failed to save test cases to Azure DevOps' },
+      { status: 500 }
+    );
+  }
+}
+
+async function createTestCaseInAzure(project: any, parentWorkItem: any, testCase: TestCaseToSave) {
+  const authToken = Buffer.from(':' + project.token).toString('base64');
+  
+  // Format test steps for Azure DevOps
+  const formattedSteps = testCase.steps.map((step, index) => {
+    return `<step id="${index + 1}"><parameterizedString isformatted="true"><parameter id="action">${step.action}</parameter></parameterizedString><parameterizedString isformatted="true"><parameter id="expected">${step.expectedOutcome}</parameter></parameterizedString><description></description></step>`;
+  }).join('');
+
+  const testStepsHtml = `<steps id="0" last="${testCase.steps.length}">${formattedSteps}</steps>`;
+
+  // Create the work item payload
+  const workItemPayload = [
+    {
+      op: 'add',
+      path: '/fields/System.Title',
+      value: testCase.title
+    },
+    {
+      op: 'add',
+      path: '/fields/System.WorkItemType',
+      value: 'Test Case'
+    },
+    {
+      op: 'add',
+      path: '/fields/System.Description',
+      value: testCase.description
+    },
+    {
+      op: 'add',
+      path: '/fields/Microsoft.VSTS.TCM.Steps',
+      value: testStepsHtml
+    },
+    {
+      op: 'add',
+      path: '/fields/System.State',
+      value: 'Design'
+    },
+    {
+      op: 'add',
+      path: '/fields/Microsoft.VSTS.Common.Priority',
+      value: getPriorityNumber(testCase.priority)
+    }
+  ];
+
+  // Add preconditions if provided
+  if (testCase.preconditions) {
+    workItemPayload.push({
+      op: 'add',
+      path: '/fields/Microsoft.VSTS.TCM.LocalDataSource',
+      value: testCase.preconditions
+    });
+  }
+
+  // Add tags based on test type and covered criteria
+  const tags = [
+    `Type:${testCase.type}`,
+    'AI-Generated'
+  ];
+  
+  if (testCase.coveredCriteria && testCase.coveredCriteria.length > 0) {
+    tags.push('AutoGenerated-TestCase');
+  }
+
+  workItemPayload.push({
+    op: 'add',
+    path: '/fields/System.Tags',
+    value: tags.join(';')
+  });
+
+  // Create the work item in Azure DevOps
+  const createUrl = `https://dev.azure.com/${project.organization}/${project.project}/_apis/wit/workitems/$Test%20Case?api-version=7.0`;
+  
+  const response = await fetch(createUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${authToken}`,
+      'Content-Type': 'application/json-patch+json',
+    },
+    body: JSON.stringify(workItemPayload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Azure DevOps API error: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+
+  const createdWorkItem = await response.json();
+
+  // Create relation to parent work item
+  if (parentWorkItem) {
+    await createWorkItemRelation(project, createdWorkItem.id, parentWorkItem.azure_id, 'System.LinkTypes.Hierarchy-Reverse');
+  }
+
+  return {
+    id: createdWorkItem.id.toString(),
+    url: createdWorkItem._links.html.href,
+    title: createdWorkItem.fields['System.Title']
+  };
+}
+
+async function createWorkItemRelation(project: any, childWorkItemId: number, parentWorkItemId: string, relationType: string) {
+  const authToken = Buffer.from(':' + project.token).toString('base64');
+  
+  const relationPayload = [
+    {
+      op: 'add',
+      path: '/relations/-',
+      value: {
+        rel: relationType,
+        url: `https://dev.azure.com/${project.organization}/${project.project}/_apis/wit/workItems/${parentWorkItemId}`,
+        attributes: {
+          comment: 'Auto-created relation from AI test generation'
+        }
+      }
+    }
+  ];
+
+  const updateUrl = `https://dev.azure.com/${project.organization}/${project.project}/_apis/wit/workitems/${childWorkItemId}?api-version=7.0`;
+  
+  const response = await fetch(updateUrl, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Basic ${authToken}`,
+      'Content-Type': 'application/json-patch+json',
+    },
+    body: JSON.stringify(relationPayload),
+  });
+
+  if (!response.ok) {
+    console.warn(`Failed to create relation between ${childWorkItemId} and ${parentWorkItemId}:`, response.statusText);
+  }
+}
+
+async function saveTestCaseToDatabase(projectId: string, workItemId: string, testCase: TestCaseToSave, azureTestCaseId: string) {
+  // Save to test_cases table
+  const { data: savedTestCase, error: testCaseError } = await supabaseAdmin
+    .from('test_cases')
+    .insert({
+      title: testCase.title,
+      description: testCase.description,
+      type: testCase.type.toUpperCase(),
+      priority: testCase.priority.toUpperCase(),
+      status: 'DESIGN',
+      steps: testCase.steps,
+      expected_result: testCase.expectedResult,
+      preconditions: testCase.preconditions,
+      test_data: testCase.testData,
+      estimated_duration: testCase.estimatedDuration,
+      project_id: projectId,
+      generated_at: new Date().toISOString(),
+      generated_by: 'AI',
+      generated_code: testCase.generatedCode
+    })
+    .select()
+    .single();
+
+  if (testCaseError) {
+    throw new Error(`Failed to save test case to database: ${testCaseError.message}`);
+  }
+
+  // Create relation to work item
+  await supabaseAdmin
+    .from('test_case_work_item_relations')
+    .insert({
+      test_case_id: savedTestCase.id,
+      work_item_id: workItemId,
+      relation_type: 'validates'
+    });
+
+  return savedTestCase;
+}
+
+function getPriorityNumber(priority: 'low' | 'medium' | 'high'): number {
+  switch (priority) {
+    case 'high': return 1;
+    case 'medium': return 2;
+    case 'low': return 3;
+    default: return 2;
+  }
+} 
