@@ -234,9 +234,9 @@ export default function TestGenerationPage() {
   const getTestTypeDescription = (type: string) => {
     switch (type) {
       case 'unit':
-        return 'Test individual components/functions in isolation for this specific work item only';
+        return 'Generate test scenarios that validate this user story in isolation (story testing)';
       case 'integration':
-        return 'Test interactions between components, leveraging similar work items and system dependencies';
+        return 'Generate test scenarios that validate interactions between user stories and system components';
       default:
         return '';
     }
@@ -266,7 +266,7 @@ export default function TestGenerationPage() {
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case 'unit': return <Code className="w-4 h-4" />;
+      case 'unit': return <FileText className="w-4 h-4" />;
       case 'integration': return <Zap className="w-4 h-4" />;
       default: return <FileText className="w-4 h-4" />;
     }
@@ -341,12 +341,14 @@ export default function TestGenerationPage() {
                         <SelectContent>
                           <SelectItem value="unit">
                             <div className="flex flex-col">
-                              <span className="font-medium">Unit Tests</span>
+                              <span className="font-medium">Story Tests</span>
+                              <span className="text-xs text-gray-500">Individual user story scenarios</span>
                             </div>
                           </SelectItem>
                           <SelectItem value="integration">
                             <div className="flex flex-col">
                               <span className="font-medium">Integration Tests</span>
+                              <span className="text-xs text-gray-500">Multi-story workflows</span>
                             </div>
                           </SelectItem>
                         </SelectContent>

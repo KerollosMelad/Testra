@@ -30,7 +30,7 @@ const mockTestCases = [
   {
     id: "3",
     title: "Password Strength Validation",
-    description: "Unit test for password validation function",
+    description: "Story test for password validation function",
     type: "unit" as const,
     priority: "medium" as const,
     project: "E-Commerce Platform",

@@ -241,7 +241,7 @@ async function fetchWorkItemDataFromDatabase(
 
     const userStory = transformDatabaseWorkItem(workItemData);
 
-    // For unit tests, focus only on the specific work item - skip related tasks
+    // For story tests, focus only on the specific work item - skip related tasks
     if (testType === 'unit') {
       return { userStory, relatedTasks: [] };
     }
