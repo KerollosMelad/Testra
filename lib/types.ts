@@ -123,3 +123,11 @@ export interface TestGenerationResult {
   suggestions: string[];
   confidence: number;
 }
+
+// Enhanced test generation interfaces
+export interface EnhancedTestCase extends TestCase {
+  coveredCriteria?: string[];
+  contentHash?: string; // For duplicate detection
+  isDuplicate?: boolean; // UI indicator
+  duplicateOf?: string; // ID of existing test case
+}

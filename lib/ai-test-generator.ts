@@ -1,5 +1,5 @@
 import { createOpenAIClient, OpenAITestGenerationResponse } from './openai';
-import { WorkItem, TestCase, TestGenerationContext, TestGenerationResult } from './types';
+import { WorkItem, TestCase, TestGenerationContext, TestGenerationResult, EnhancedTestCase } from './types';
 import { createEmbeddingService } from './embedding-service';
 import OpenAI from 'openai';
 
@@ -41,12 +41,7 @@ interface TestGenerationOptions {
   chunkSize?: number; // 2-3 by default
 }
 
-// Enhanced TestCase interface
-interface EnhancedTestCase extends TestCase {
-  coveredCriteria?: string[]; // Which acceptance criteria this test covers
-  chunkId?: string; // Which chunk generated this test
-  dependsOnTests?: string[]; // Test IDs this test depends on
-}
+// Enhanced TestCase interface removed - now imported from types.ts
 
 export class AITestGenerator {
   private temperature: number;
@@ -697,16 +692,14 @@ ${testScenarioGuidance}
 Please generate clean, well-commented, and executable test code that follows best practices for ${framework} and ${language}.`;
   }
 
-  // New streaming generation method
+  // Simplified streaming generation method without sessions
   async *generateTestCasesStreaming(
     context: TestGenerationContext, 
     options: TestGenerationOptions = {}
   ): AsyncGenerator<StreamingTestGenerationResult, void, unknown> {
     const {
-      enableStreaming = true,
       maxTokensPerChunk = 1500,
-      chunkSize = 3,
-      enablePause = true
+      chunkSize = 3
     } = options;
 
     try {
@@ -733,6 +726,7 @@ Please generate clean, well-commented, and executable test code that follows bes
       let previousTests: TestCase[] = [];
       let previousSummary = '';
 
+      // Process chunks
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         
@@ -755,10 +749,10 @@ Please generate clean, well-commented, and executable test code that follows bes
           const enhancedTestCases = result.testCases.map(tc => ({
             ...tc,
             coveredCriteria: chunk.originalCriteria,
-            chunkId: chunk.id
-          })) as (TestCase & { coveredCriteria: string[]; chunkId: string })[];
+            projectId: context.userStory.projectId || ''
+          })) as EnhancedTestCase[];
 
-          // Update previous tests and summary
+          // Update previous tests and summary for next chunk
           previousTests = [...previousTests, ...enhancedTestCases];
           previousSummary = this.createDetailedTestSummary(previousTests);
 
@@ -773,7 +767,7 @@ Please generate clean, well-commented, and executable test code that follows bes
             currentChunkIndex: i,
             totalChunks: chunks.length,
             acceptanceCriteria: chunk.originalCriteria,
-            canPause: enablePause
+            canPause: false // No session support
           };
 
         } catch (error) {
@@ -793,7 +787,7 @@ Please generate clean, well-commented, and executable test code that follows bes
             currentChunkIndex: i,
             totalChunks: chunks.length,
             acceptanceCriteria: chunk.originalCriteria,
-            canPause: enablePause
+            canPause: false
           };
         }
       }

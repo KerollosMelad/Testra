@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { createEmbeddingService } from '@/lib/embedding-service';
 
 interface TestCaseStep {
   step: number;
@@ -70,6 +71,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Get OpenAI API key for embedding generation
+    const apiKey = project.openai_api_key || project.open_ai_key;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: 'OpenAI API key not configured for this project' },
+        { status: 400 }
+      );
+    }
+
+    // Create embedding service
+    const embeddingService = createEmbeddingService(apiKey);
+
     const createdTestCases = [];
     const errors = [];
 
@@ -80,6 +93,33 @@ export async function POST(request: NextRequest) {
         
         // Save test case to local database
         const savedTestCase = await saveTestCaseToDatabase(projectId, workItemId, testCase, azureTestCase.id);
+        
+        // Generate and save embedding for the test case
+        try {
+          await embeddingService.embedTestCase({
+            id: savedTestCase.id,
+            title: savedTestCase.title,
+            description: savedTestCase.description,
+            type: savedTestCase.type.toLowerCase() as 'unit' | 'integration',
+            priority: savedTestCase.priority.toLowerCase() as 'low' | 'medium' | 'high',
+            status: savedTestCase.status.toLowerCase() as any,
+            steps: savedTestCase.steps || [],
+            expectedResult: savedTestCase.expected_result,
+            preconditions: savedTestCase.preconditions,
+            testData: savedTestCase.test_data,
+            estimatedDuration: savedTestCase.estimated_duration,
+            projectId: savedTestCase.project_id,
+            createdAt: new Date(savedTestCase.created_at),
+            updatedAt: new Date(savedTestCase.updated_at || savedTestCase.created_at),
+            generatedAt: savedTestCase.generated_at ? new Date(savedTestCase.generated_at) : undefined,
+            generatedBy: savedTestCase.generated_by as any,
+            generatedCode: savedTestCase.generated_code,
+          });
+          console.log(`Generated embedding for test case: ${savedTestCase.title}`);
+        } catch (embeddingError) {
+          console.error(`Failed to generate embedding for test case "${savedTestCase.title}":`, embeddingError);
+          // Don't fail the entire operation if embedding fails, just log the error
+        }
         
         createdTestCases.push({
           localId: savedTestCase.id,

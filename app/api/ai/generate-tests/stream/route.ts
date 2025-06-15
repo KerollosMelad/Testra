@@ -3,7 +3,6 @@ import { createAITestGenerator } from "@/lib/ai-test-generator";
 import { isProjectOpenAIConfigured } from "@/lib/openai";
 import { TestGenerationContext, WorkItem, Project } from "@/lib/types";
 import { supabaseAdmin } from "@/lib/supabase";
-import { htmlAcceptanceCriteriaToText, cleanUserStoryDescription } from '@/lib/html-to-text';
 
 interface GenerateTestsStreamRequest {
   projectId: string;
@@ -57,9 +56,7 @@ export async function POST(request: NextRequest) {
 
             const streamOptions = {
               chunkSize: requestData.chunkSize || 3,
-              maxTokensPerChunk: requestData.maxTokensPerChunk || 1500,
-              enablePause: true,
-              enableStreaming: true
+              maxTokensPerChunk: requestData.maxTokensPerChunk || 1500
             };
 
             // Send initial event
