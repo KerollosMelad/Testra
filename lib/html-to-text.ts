@@ -40,6 +40,7 @@ export function htmlAcceptanceCriteriaToText(html: string | null): string | null
     if (criteria.length > 0) {
       // Format as a clean numbered list
       return criteria
+        .map(criterion => cleanCriteriaText(criterion))
         .map((criterion, index) => `${index + 1}. ${criterion}`)
         .join('\n');
     }
@@ -160,6 +161,29 @@ function cleanHtmlText(text: string): string {
     .replace(/\n\s+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/**
+ * Clean up criteria text by removing trailing numbers from parsing
+ */
+function cleanCriteriaText(text: string): string {
+  if (!text) return text;
+  
+  // Remove trailing numbers that are likely from next criteria (e.g., "text. 2." -> "text.")
+  let cleaned = text.replace(/\.\s*\d+\.\s*$/, '.');
+  
+  // Remove standalone trailing numbers (e.g., "text 2." -> "text.")
+  cleaned = cleaned.replace(/\s+\d+\.\s*$/, '.');
+  
+  // Remove trailing periods followed by spaces and numbers
+  cleaned = cleaned.replace(/\.\s+\d+\s*$/, '.');
+  
+  // Ensure it ends with a period if it's a complete sentence
+  if (!cleaned.endsWith('.') && !cleaned.endsWith('!') && !cleaned.endsWith('?')) {
+    cleaned += '.';
+  }
+  
+  return cleaned.trim();
 }
 
 /**

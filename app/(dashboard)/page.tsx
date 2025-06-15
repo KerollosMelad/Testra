@@ -50,6 +50,7 @@ export default async function DashboardPage() {
           project.organization,
           project.project,
           project.token,
+          project.id, // Pass project ID to get test cases count from database
         );
 
         return {

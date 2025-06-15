@@ -1,5 +1,5 @@
 import { createOpenAIClient, OpenAITestGenerationResponse } from './openai';
-import { WorkItem, TestCase, TestGenerationContext, TestGenerationResult } from './types';
+import { WorkItem, TestCase, TestGenerationContext, TestGenerationResult, EnhancedTestCase } from './types';
 import { createEmbeddingService } from './embedding-service';
 import OpenAI from 'openai';
 
@@ -41,12 +41,7 @@ interface TestGenerationOptions {
   chunkSize?: number; // 2-3 by default
 }
 
-// Enhanced TestCase interface
-interface EnhancedTestCase extends TestCase {
-  coveredCriteria?: string[]; // Which acceptance criteria this test covers
-  chunkId?: string; // Which chunk generated this test
-  dependsOnTests?: string[]; // Test IDs this test depends on
-}
+// Enhanced TestCase interface removed - now imported from types.ts
 
 export class AITestGenerator {
   private temperature: number;
@@ -86,13 +81,13 @@ export class AITestGenerator {
 
   private async enhanceContextWithSimilarItems(context: TestGenerationContext): Promise<TestGenerationContext> {
     try {
-      // Only enhance context for integration tests - unit tests should focus on the specific work item only
-      if (context.testType !== 'integration') {
-        return {
-          ...context,
-          relatedTasks: [], // Clear related tasks for unit tests
-        };
-      }
+          // Only enhance context for integration tests - story tests should focus on the specific work item only
+    if (context.testType !== 'integration') {
+      return {
+        ...context,
+        relatedTasks: [], // Clear related tasks for story tests
+      };
+    }
       
       // Create search query from user story
       const searchQuery = this.createSearchQuery(context.userStory);
@@ -280,131 +275,140 @@ export class AITestGenerator {
 
   private getSystemPrompt(testType: string = 'integration'): string {
     if (testType === 'unit') {
-      return this.getUnitTestSystemPrompt();
+      return this.getStoryTestSystemPrompt();
     } else {
       return this.getIntegrationTestSystemPrompt();
     }
   }
 
-  private getUnitTestSystemPrompt(): string {
-    return `You are an expert QA engineer specializing in unit test generation. Your goal is to create precise, isolated unit tests.
+  private getStoryTestSystemPrompt(): string {
+    return `You are an expert QA test designer specializing in creating manual test scenarios for business users.
 
-## UNIT TEST PRINCIPLES:
-- Test individual component functionality in complete isolation
-- Mock ALL external dependencies (APIs, databases, services, other components)
-- Focus on input validation, business logic, and error handling within the component
-- Test edge cases and boundary conditions
-- Verify component behavior under different input scenarios
+**IMPORTANT: You generate BUSINESS-FOCUSED TEST SCENARIOS for manual execution by QC testers.**
 
-## COVERAGE APPROACH:
+Your task is to create test scenarios that validate individual user story functionality from a business user perspective.
 
-### BASIC (2-4 test cases):
-- Happy path with valid inputs
-- Primary error handling (invalid inputs)
-- Core business logic validation
+## What "Story Testing" Means:
+- Test scenarios that focus on ONE user story's business functionality
+- Validate all acceptance criteria from a user's perspective
+- Test the user story as if external systems work correctly
+- Focus on the user story's business value and behavior
+- Ensure the feature works as intended by business stakeholders
 
-### COMPREHENSIVE (6-12 test cases):
-- All input combinations and edge cases
-- Boundary value testing
-- Error scenarios and exception handling
-- State management within the component
-- Input validation and sanitization
+## Expected Output Format:
+For each test scenario, provide:
 
-## RESPONSE FORMAT:
-Return ONLY valid JSON with this exact structure:
+**Test Scenario Title:** [Clear, business-focused title]
+**Description:** [What business functionality this validates]
+**Preconditions:** [Required system state and test data setup]
+**Test Steps:** [Numbered user actions and system interactions]
+**Expected Results:** [What the user should observe]
+
+## Requirements:
+- Generate MANUAL TEST SCENARIOS in business language
+- Each scenario should map directly to acceptance criteria
+- Use business terms and user actions, not technical implementation
+- Focus on user workflows and expected business outcomes
+- Assume all external systems and dependencies work correctly
+- Write steps that a business user or QC tester can execute
+- Validate user story functionality from an end-user perspective
+
+**DO NOT include technical details like mocking, APIs, or implementation specifics.**
+
+## JSON Response Format:
+Return your response as a valid JSON object with this exact structure:
 
 {
   "testCases": [
     {
-      "title": "Clear, descriptive test name focused on specific behavior",
-      "description": "What specific component behavior this test validates",
+      "title": "Clear, descriptive test scenario name",
+      "description": "What this scenario validates",
       "type": "unit",
       "priority": "low" | "medium" | "high",
       "steps": [
         {
           "step": 1,
-          "action": "Setup component with specific inputs/mocks",
-          "expectedOutcome": "Expected component behavior",
-          "testData": {"input": "test_value"}
+          "action": "Action to perform",
+          "expectedOutcome": "Expected result",
+          "testData": {}
         }
       ],
-      "expectedResult": "Specific component output or behavior",
-      "preconditions": "Required mocks and test setup",
-      "testData": {"inputs": "test_values"},
-      "estimatedDuration": 10,
-      "generatedCode": "// Unit test implementation with mocks"
+      "expectedResult": "Overall expected outcome",
+      "preconditions": "Setup requirements and mocked dependencies",
+      "testData": {},
+      "estimatedDuration": 10
     }
   ],
-  "suggestions": ["Improvement recommendations"],
+  "suggestions": ["Additional recommendations"],
   "confidence": 0.9
 }
 
-IMPORTANT: 
-- Focus ONLY on the specific component being tested
-- Mock everything external (no real API calls, database operations, or component integrations)
-- Each test should validate one specific behavior or scenario
-- Respond with ONLY the JSON object. No additional text.`;
+**IMPORTANT: Respond with ONLY the JSON object. No additional text.**`;
   }
 
   private getIntegrationTestSystemPrompt(): string {
-    return `You are an expert QA engineer specializing in integration test generation. Your goal is to create comprehensive end-to-end integration tests.
+    return `You are an expert QA test designer specializing in creating end-to-end test scenarios for business workflows.
 
-## INTEGRATION TEST PRINCIPLES:
-- Test component interactions and data flow between systems
-- Include real API contracts, database operations, and service integrations
-- Validate complete user workflows and business processes
-- Test error propagation across system boundaries
-- Verify system behavior under realistic conditions
+**IMPORTANT: You generate BUSINESS-FOCUSED END-TO-END TEST SCENARIOS for manual execution by QC testers.**
 
-## COVERAGE APPROACH:
+Your task is to create integration test scenarios that validate complete business workflows and user journeys.
 
-### BASIC (2-4 test cases):
-- Primary user workflow (happy path)
-- Critical system integration points
-- Basic error handling across components
+## What "Integration Testing" Means:
+- Test scenarios that validate complete business processes
+- Test end-to-end user workflows across multiple features
+- Validate that different parts of the system work together seamlessly
+- Test realistic business scenarios and user journeys
+- Ensure complete business value is delivered through integrated features
 
-### COMPREHENSIVE (6-12 test cases):
-- Complete user journeys from start to finish
-- Multiple integration points and data flows
-- Cross-system error scenarios
-- Performance and scalability considerations
-- Security and authorization workflows
+## Expected Output Format:
+For each test scenario, provide:
 
-## RESPONSE FORMAT:
-Return ONLY valid JSON with this exact structure:
+**Test Scenario Title:** [Clear, business workflow title]
+**Description:** [What business process this validates]
+**Preconditions:** [Required business setup and test data]
+**Test Steps:** [Numbered user actions across the business workflow]
+**Expected Results:** [What the business user should observe]
+
+## Requirements:
+- Generate END-TO-END BUSINESS TEST SCENARIOS in user-friendly language
+- Focus on complete business workflows and user journeys
+- Include realistic business scenarios and user interactions
+- Test how different features work together from a user perspective
+- Validate complete business value delivery
+- Write steps that simulate real user behavior and business processes
+- Test cross-functional workflows and integrations
+
+**DO NOT include technical details like APIs, databases, or system architecture specifics.**
+
+## JSON Response Format:
+Return your response as a valid JSON object with this exact structure:
 
 {
   "testCases": [
     {
-      "title": "Clear, descriptive test name for end-to-end scenario",
-      "description": "What complete workflow this test validates",
+      "title": "Clear, descriptive test scenario name",
+      "description": "What integration this scenario validates",
       "type": "integration",
       "priority": "low" | "medium" | "high",
       "steps": [
         {
           "step": 1,
-          "action": "Real system action (API call, database operation, etc.)",
-          "expectedOutcome": "Expected system response",
-          "testData": {"endpoint": "/api/test", "payload": {}}
+          "action": "Action to perform",
+          "expectedOutcome": "Expected result",
+          "testData": {}
         }
       ],
-      "expectedResult": "Complete workflow outcome",
-      "preconditions": "Required system state and data setup",
-      "testData": {"realistic": "production_like_data"},
-      "estimatedDuration": 20,
-      "generatedCode": "// Integration test with real system calls"
+      "expectedResult": "Overall expected outcome",
+      "preconditions": "Setup requirements and data dependencies",
+      "testData": {},
+      "estimatedDuration": 15
     }
   ],
-  "suggestions": ["Improvement recommendations"],
+  "suggestions": ["Additional recommendations"],
   "confidence": 0.9
 }
 
-IMPORTANT: 
-- Test real system integrations (no mocking of external systems)
-- Focus on complete user workflows and business processes
-- Include realistic test data and production-like scenarios
-- Each test should validate end-to-end functionality
-- Respond with ONLY the JSON object. No additional text.`;
+**IMPORTANT: Respond with ONLY the JSON object. No additional text.**`;
   }
 
   private buildPrompt(context: TestGenerationContext): string {
@@ -416,7 +420,7 @@ IMPORTANT:
       this.buildRelatedTasksSection(relatedTasks),
       this.buildTestRequirementsSection(testType, coverageLevel),
       this.buildExistingTestCasesSection(existingTestCases),
-      this.buildInstructionsSection(testType, coverageLevel)
+      this.buildInstructionsSection(testType, coverageLevel, customRequirements)
     ];
 
     return sections.join('\n\n');
@@ -484,15 +488,15 @@ Similar test cases:
 ${existingTestCases.slice(0, 3).map(tc => `- ${tc.title} (${tc.type})`).join('\n')}`;
   }
 
-  private buildInstructionsSection(testType: string, coverageLevel: string): string {
+  private buildInstructionsSection(testType: string, coverageLevel: string, customRequirements?: string): string {
     if (testType === 'unit') {
-      return this.buildUnitTestInstructions(coverageLevel);
+      return this.buildStoryTestInstructions(coverageLevel, customRequirements);
     } else {
-      return this.buildIntegrationTestInstructions(coverageLevel);
+      return this.buildIntegrationTestInstructions(coverageLevel, customRequirements);
     }
   }
 
-  private buildUnitTestInstructions(coverageLevel: string): string {
+  private buildStoryTestInstructions(coverageLevel: string, customRequirements?: string): string {
     const coverageGuidance = coverageLevel === 'basic'
       ? `**BASIC COVERAGE REQUIREMENTS:**
 - Generate 2-4 essential test cases only
@@ -506,30 +510,48 @@ ${existingTestCases.slice(0, 3).map(tc => `- ${tc.title} (${tc.type})`).join('\n
 - Include multiple positive and negative scenarios
 - Test edge cases, boundary conditions, and error scenarios
 - Include data validation, security, and performance considerations`
+      : coverageLevel === 'custom' && customRequirements
+      ? `**CUSTOM COVERAGE REQUIREMENTS:**
+- Generate test cases ONLY for the following custom requirements
+- Ignore standard acceptance criteria - focus exclusively on custom requirements
+- Custom requirements to test:
+${customRequirements}
+- Generate appropriate number of test cases to thoroughly cover these specific requirements`
       : `**CUSTOM COVERAGE:**
 - Follow the specific custom requirements provided
 - Balance thoroughness with the requested scope`;
 
-    return `**UNIT TEST FOCUS:**
-- Test ONLY the specific work item functionality in complete isolation
-- Mock ALL external dependencies (APIs, databases, services, other components)
-- Focus on component behavior, input validation, and error handling
-- Test business logic and state management within the component
+    const testScenarioGuidance = coverageLevel === 'custom' && customRequirements
+      ? `**TEST SCENARIO REQUIREMENTS:**
+1. Focus EXCLUSIVELY on the custom requirements specified above
+2. Generate test scenarios that validate only these custom requirements
+3. Include realistic test data and expected outcomes for isolated validation
+4. Provide estimated duration in minutes (typically 5-15 minutes per scenario)
+5. Generate test scenarios (executable steps), NOT test code
+6. Ensure each scenario validates one specific custom requirement
+7. Ignore acceptance criteria - test only the custom requirements`
+      : `**TEST SCENARIO REQUIREMENTS:**
+1. Cover the acceptance criteria thoroughly based on coverage level
+2. Include realistic test data and expected outcomes for isolated user story validation
+3. Provide estimated duration in minutes (typically 5-15 minutes per scenario)
+4. Generate test scenarios (executable steps), NOT test code
+5. Focus solely on the current user story without external dependencies
+6. Ensure each scenario validates one specific behavior or criterion`;
+
+    return `**STORY TESTING:**
+- Test ONLY the specific user story functionality in complete isolation
+- Mock or stub ALL external dependencies (APIs, databases, other user stories)
+- Focus on user story behavior, input validation, and error handling
+- Test business logic and state management within the user story
 
 ${coverageGuidance}
 
-**UNIT TEST REQUIREMENTS:**
-1. Cover the acceptance criteria thoroughly based on coverage level
-2. Include realistic test data and expected outcomes for isolated component testing
-3. Provide estimated duration in minutes (typically 5-15 minutes per unit test)
-4. Include generated code examples with proper mocking
-5. Focus solely on the current component without external dependencies
-6. Ensure each test case validates one specific behavior or scenario
+${testScenarioGuidance}
 
-Focus on quality over quantity. Each unit test should validate specific component behavior in isolation and be executable by the testing team.`;
+**IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Focus on quality over quantity. Each scenario should validate specific user story behavior in isolation and be executable by the testing team.`;
   }
 
-  private buildIntegrationTestInstructions(coverageLevel: string): string {
+  private buildIntegrationTestInstructions(coverageLevel: string, customRequirements?: string): string {
     const coverageGuidance = coverageLevel === 'basic'
       ? `**BASIC COVERAGE REQUIREMENTS:**
 - Generate 2-4 essential test cases only
@@ -543,27 +565,45 @@ Focus on quality over quantity. Each unit test should validate specific componen
 - Include multiple positive and negative scenarios
 - Test edge cases, boundary conditions, and error scenarios
 - Include data validation, security, and performance considerations`
+      : coverageLevel === 'custom' && customRequirements
+      ? `**CUSTOM COVERAGE REQUIREMENTS:**
+- Generate test cases ONLY for the following custom requirements
+- Ignore standard acceptance criteria - focus exclusively on custom requirements
+- Custom requirements to test:
+${customRequirements}
+- Generate appropriate number of test cases to thoroughly cover these specific requirements`
       : `**CUSTOM COVERAGE:**
 - Follow the specific custom requirements provided
 - Balance thoroughness with the requested scope`;
 
-    return `**INTEGRATION TEST FOCUS:**
-- Test component interactions and data flow between systems
+    const testScenarioGuidance = coverageLevel === 'custom' && customRequirements
+      ? `**TEST SCENARIO REQUIREMENTS:**
+1. Focus EXCLUSIVELY on the custom requirements specified above
+2. Generate test scenarios that validate only these custom requirements
+3. Include realistic test data and expected outcomes for integration validation
+4. Provide estimated duration in minutes
+5. Generate test scenarios (executable steps), NOT test code
+6. Ensure each scenario validates one specific custom requirement through integration
+7. Ignore acceptance criteria - test only the custom requirements`
+      : `**TEST SCENARIO REQUIREMENTS:**
+1. Cover the acceptance criteria thoroughly based on coverage level
+2. Include realistic test data and expected outcomes
+3. Provide estimated duration in minutes
+4. Generate test scenarios (executable steps), NOT test code
+5. Build upon related work items and avoid duplicating existing test cases
+6. Ensure each scenario is clear, actionable, and valuable`;
+
+    return `**INTEGRATION TESTING:**
+- Test interactions between user stories and system components
 - Include API contracts, database operations, and external service calls
 - Leverage similar work items to understand system integration points
 - Test error propagation across component boundaries
 
 ${coverageGuidance}
 
-**INTEGRATION TEST REQUIREMENTS:**
-1. Cover the acceptance criteria thoroughly based on coverage level
-2. Include realistic test data and expected outcomes
-3. Provide estimated duration in minutes
-4. Include generated code examples where applicable
-5. Build upon related work items and avoid duplicating existing test cases
-6. Ensure each test case is clear, actionable, and valuable
+${testScenarioGuidance}
 
-Focus on quality over quantity. Each test case should directly validate the requirements and be executable by the testing team.`;
+**IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Focus on quality over quantity. Each scenario should directly validate the requirements and be executable by the testing team.`;
   }
 
   private transformToTestGenerationResult(
@@ -652,31 +692,41 @@ Focus on quality over quantity. Each test case should directly validate the requ
 Please generate clean, well-commented, and executable test code that follows best practices for ${framework} and ${language}.`;
   }
 
-  // New streaming generation method
+  // Simplified streaming generation method without sessions
   async *generateTestCasesStreaming(
     context: TestGenerationContext, 
     options: TestGenerationOptions = {}
   ): AsyncGenerator<StreamingTestGenerationResult, void, unknown> {
     const {
-      enableStreaming = true,
       maxTokensPerChunk = 1500,
-      chunkSize = 3,
-      enablePause = true
+      chunkSize = 3
     } = options;
 
     try {
-      // Parse and chunk acceptance criteria
-      const chunks = await this.analyzeAndChunkAcceptanceCriteria(
-        context.userStory.acceptanceCriteria || '',
-        chunkSize,
-        maxTokensPerChunk
-      );
+      let chunks: AcceptanceCriteriaChunk[] = [];
 
-
+      // Handle custom requirements differently - don't chunk, use as single item
+      if (context.coverageLevel === 'custom' && context.customRequirements) {
+        chunks = [{
+          id: 'custom-requirements',
+          criteria: [context.customRequirements],
+          originalCriteria: [context.customRequirements],
+          priority: 'high' as const,
+          estimatedTokens: this.estimateTokens(context.customRequirements)
+        }];
+      } else {
+        // Parse and chunk acceptance criteria for standard coverage
+        chunks = await this.analyzeAndChunkAcceptanceCriteria(
+          context.userStory.acceptanceCriteria || '',
+          chunkSize,
+          maxTokensPerChunk
+        );
+      }
 
       let previousTests: TestCase[] = [];
       let previousSummary = '';
 
+      // Process chunks
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         
@@ -699,10 +749,10 @@ Please generate clean, well-commented, and executable test code that follows bes
           const enhancedTestCases = result.testCases.map(tc => ({
             ...tc,
             coveredCriteria: chunk.originalCriteria,
-            chunkId: chunk.id
-          })) as (TestCase & { coveredCriteria: string[]; chunkId: string })[];
+            projectId: context.userStory.projectId || ''
+          })) as EnhancedTestCase[];
 
-          // Update previous tests and summary
+          // Update previous tests and summary for next chunk
           previousTests = [...previousTests, ...enhancedTestCases];
           previousSummary = this.createDetailedTestSummary(previousTests);
 
@@ -717,7 +767,7 @@ Please generate clean, well-commented, and executable test code that follows bes
             currentChunkIndex: i,
             totalChunks: chunks.length,
             acceptanceCriteria: chunk.originalCriteria,
-            canPause: enablePause
+            canPause: false // No session support
           };
 
         } catch (error) {
@@ -737,7 +787,7 @@ Please generate clean, well-commented, and executable test code that follows bes
             currentChunkIndex: i,
             totalChunks: chunks.length,
             acceptanceCriteria: chunk.originalCriteria,
-            canPause: enablePause
+            canPause: false
           };
         }
       }
@@ -749,7 +799,7 @@ Please generate clean, well-commented, and executable test code that follows bes
   }
 
   // Enhanced acceptance criteria analysis and chunking
-  private async analyzeAndChunkAcceptanceCriteria(
+  private analyzeAndChunkAcceptanceCriteria(
     acceptanceCriteria: string,
     maxChunkSize: number = 3,
     maxTokensPerChunk: number = 1500
@@ -762,24 +812,25 @@ Please generate clean, well-commented, and executable test code that follows bes
       // Fallback: treat the entire acceptanceCriteria as a single chunk
       const cleanedCriteria = this.extractPlainTextFromHTML(acceptanceCriteria);
       
-      return [{
+      return Promise.resolve([{
         id: 'chunk-1',
         criteria: [cleanedCriteria],
         originalCriteria: [cleanedCriteria],
         priority: 'high',
         estimatedTokens: this.estimateTokens(cleanedCriteria)
-      }];
+      }]);
     }
 
-
+    // Clean HTML from criteria items
+    const cleanedItems = criteriaItems.map(item => this.extractPlainTextFromHTML(item));
 
     // Detect dependencies between criteria
-    const dependencies = await this.detectCriteriaDependencies(criteriaItems);
+    const dependencies = this.detectCriteriaDependencies(cleanedItems);
     
     // Create chunks based on dependencies and size limits
-    const chunks = this.createOptimalChunks(criteriaItems, dependencies, maxChunkSize, maxTokensPerChunk);
+    const chunks = this.createOptimalChunks(cleanedItems, dependencies, maxChunkSize, maxTokensPerChunk);
     
-    return chunks;
+    return Promise.resolve(chunks);
   }
 
   private parseAcceptanceCriteria(acceptanceCriteria: string): string[] {
@@ -787,12 +838,15 @@ Please generate clean, well-commented, and executable test code that follows bes
       return [];
     }
     
-    // First try to extract from structured patterns
-    let criteria = this.parseTextCriteria(acceptanceCriteria);
+    // First clean HTML from the input
+    const cleanedInput = this.extractPlainTextFromHTML(acceptanceCriteria);
+    
+    // Try to extract from structured patterns
+    let criteria = this.parseTextCriteria(cleanedInput);
     
     // If no criteria found, try extracting from description that contains "Acceptance Criteria:"
     if (criteria.length === 0) {
-      criteria = this.extractCriteriaFromDescription(acceptanceCriteria);
+      criteria = this.extractCriteriaFromDescription(cleanedInput);
     }
     
     return criteria;
@@ -878,12 +932,12 @@ Please generate clean, well-commented, and executable test code that follows bes
     }
 
     return items
-      .map(item => item.trim())
+      .map(item => this.cleanCriteriaText(item.trim()))
       .filter(item => item.length > 5)
       .slice(0, 15); // Reasonable limit
   }
 
-  private async detectCriteriaDependencies(criteria: string[]): Promise<Map<number, number[]>> {
+  private detectCriteriaDependencies(criteria: string[]): Map<number, number[]> {
     const dependencies = new Map<number, number[]>();
 
     for (let i = 0; i < criteria.length; i++) {
@@ -935,6 +989,26 @@ Please generate clean, well-commented, and executable test code that follows bes
     const wordsB = textB.split(/\s+/).filter(w => w.length > 2 && !commonWords.includes(w));
     
     return wordsA.filter(word => wordsB.includes(word));
+  }
+
+  private cleanCriteriaText(text: string): string {
+    if (!text) return text;
+    
+    // Remove trailing numbers that are likely from next criteria (e.g., "text. 2." -> "text.")
+    let cleaned = text.replace(/\.\s*\d+\.\s*$/, '.');
+    
+    // Remove standalone trailing numbers (e.g., "text 2." -> "text.")
+    cleaned = cleaned.replace(/\s+\d+\.\s*$/, '.');
+    
+    // Remove trailing periods followed by spaces and numbers
+    cleaned = cleaned.replace(/\.\s+\d+\s*$/, '.');
+    
+    // Ensure it ends with a period if it's a complete sentence
+    if (!cleaned.endsWith('.') && !cleaned.endsWith('!') && !cleaned.endsWith('?')) {
+      cleaned += '.';
+    }
+    
+    return cleaned.trim();
   }
 
   private createOptimalChunks(
@@ -1058,7 +1132,7 @@ Please generate clean, well-commented, and executable test code that follows bes
   }
 
   private buildChunkedPrompt(context: ChunkedGenerationContext): string {
-    const { project, userStory, testType, coverageLevel, currentChunk } = context;
+    const { project, userStory, testType, coverageLevel, currentChunk, customRequirements } = context;
 
     // Build clean, focused prompt
     const sections = [
@@ -1072,13 +1146,13 @@ Please generate clean, well-commented, and executable test code that follows bes
       ``,
       this.buildCleanUserStoryDescription(userStory),
       ``,
-      this.buildAcceptanceCriteriaSection(currentChunk),
+      this.buildAcceptanceCriteriaSection(currentChunk, coverageLevel, customRequirements),
       ``,
       `## Test Requirements`,
       `- **Test Type:** ${testType}`,
       `- **Coverage Level:** ${coverageLevel}`,
       ``,
-      this.buildTestingInstructions(testType, coverageLevel, currentChunk),
+      this.buildTestingInstructions(testType, coverageLevel, currentChunk, customRequirements),
     ];
 
     return sections.filter(section => section !== null).join('\n');
@@ -1099,7 +1173,12 @@ Please generate clean, well-commented, and executable test code that follows bes
     return `**Description:**\n${cleanDescription}`;
   }
 
-  private buildAcceptanceCriteriaSection(chunk?: AcceptanceCriteriaChunk): string {
+  private buildAcceptanceCriteriaSection(chunk?: AcceptanceCriteriaChunk, coverageLevel?: string, customRequirements?: string): string {
+    if (coverageLevel === 'custom' && customRequirements) {
+      return `## Custom Requirements (Focus Area)
+${customRequirements}`;
+    }
+    
     if (!chunk || !chunk.originalCriteria || chunk.originalCriteria.length === 0) {
       return '## Acceptance Criteria\nNo specific acceptance criteria provided for this test generation.';
     }
@@ -1111,74 +1190,211 @@ Please generate clean, well-commented, and executable test code that follows bes
     return `## Acceptance Criteria (Focus Area)\n${criteriaList}`;
   }
 
-  private buildTestingInstructions(testType: string, coverageLevel: string, chunk?: AcceptanceCriteriaChunk): string {
+  private buildTestingInstructions(testType: string, coverageLevel: string, chunk?: AcceptanceCriteriaChunk, customRequirements?: string): string {
     const criteriaCount = chunk?.originalCriteria?.length || 0;
     
     if (testType === 'unit') {
-      return this.buildUnitTestInstructionsForChunk(coverageLevel, criteriaCount);
+      return this.buildStoryTestInstructionsForChunk(coverageLevel, criteriaCount, customRequirements);
     } else {
-      return this.buildIntegrationTestInstructionsForChunk(coverageLevel, criteriaCount);
+      return this.buildIntegrationTestInstructionsForChunk(coverageLevel, criteriaCount, customRequirements);
     }
   }
 
-  private buildUnitTestInstructionsForChunk(coverageLevel: string, criteriaCount: number): string {
+  private buildStoryTestInstructionsForChunk(coverageLevel: string, criteriaCount: number, customRequirements?: string): string {
+    if (coverageLevel === 'custom' && customRequirements) {
+      return `## Testing Instructions
+**STORY TESTING:** Create test scenarios that validate the custom requirements in isolation.
+**CUSTOM COVERAGE:** Generate test cases ONLY for the custom requirements specified above.
+
+**Expected Output:** Test scenarios that directly validate the custom requirements above.
+
+**Test Scenario Requirements:**
+- Each scenario must map to specific custom requirements
+- Focus EXCLUSIVELY on the custom requirements specified
+- Mock or stub external dependencies (APIs, databases, other user stories)
+- Include realistic test data for component validation
+- Provide clear, executable test steps with setup requirements
+- Focus only on the custom requirements - ignore standard acceptance criteria
+- Validate custom requirement behavior independently
+
+**IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Each scenario should be executable by a tester or QA engineer.
+
+**JSON Response Format:** Return your response as a valid JSON object with the structure:
+{
+  "testCases": [
+    {
+      "title": "Test scenario name",
+      "description": "What custom requirement this validates",
+      "type": "unit",
+      "priority": "medium",
+      "steps": [{"step": 1, "action": "...", "expectedOutcome": "...", "testData": {}}],
+      "expectedResult": "Overall outcome",
+      "preconditions": "Setup requirements",
+      "testData": {},
+      "estimatedDuration": 10
+    }
+  ],
+  "suggestions": [],
+  "confidence": 0.9
+}
+
+**Respond with ONLY the JSON object.**`;
+    }
+
     const expectedTests = coverageLevel === 'comprehensive' 
       ? Math.min(12, criteriaCount * 3)
       : Math.min(4, criteriaCount + 1);
 
     const coverageGuidance = coverageLevel === 'comprehensive'
-      ? `**COMPREHENSIVE COVERAGE:** Generate 6-12 detailed test cases covering all criteria.`
-      : `**BASIC COVERAGE:** Generate 2-4 essential test cases focusing on core functionality.`;
+      ? `**COMPREHENSIVE COVERAGE:** Generate 6-12 detailed test scenarios covering all criteria.`
+      : `**BASIC COVERAGE:** Generate 2-4 essential test scenarios focusing on core functionality.`;
 
     return `## Testing Instructions
-**UNIT TEST FOCUS:** Test individual component functionality. Mock ALL external dependencies.
+**STORY TESTING:** Create test scenarios that validate this user story in isolation.
 ${coverageGuidance}
 
-**Expected Output:** Approximately ${expectedTests} unit test cases that directly validate the acceptance criteria above.
+**Expected Output:** Approximately ${expectedTests} test scenarios that directly validate the acceptance criteria above.
 
-**Unit Test Requirements:**
-- Each test case must map to specific acceptance criteria
-- Mock all external dependencies (APIs, databases, services)
-- Include realistic test data for isolated component testing
-- Provide clear, executable test steps with proper setup/teardown
+**Test Scenario Requirements:**
+- Each scenario must map to specific acceptance criteria
+- Focus on testing this user story's functionality in isolation
+- Mock or stub external dependencies (APIs, databases, other user stories)
+- Include realistic test data for component validation
+- Provide clear, executable test steps with setup requirements
 - Focus only on the criteria listed above
-- Test component behavior in complete isolation`;
+- Validate user story behavior independently
+
+**IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Each scenario should be executable by a tester or QA engineer.
+
+**JSON Response Format:** Return your response as a valid JSON object with the structure:
+{
+  "testCases": [
+    {
+      "title": "Test scenario name",
+      "description": "What this validates",
+      "type": "unit",
+      "priority": "medium",
+      "steps": [{"step": 1, "action": "...", "expectedOutcome": "...", "testData": {}}],
+      "expectedResult": "Overall outcome",
+      "preconditions": "Setup requirements",
+      "testData": {},
+      "estimatedDuration": 10
+    }
+  ],
+  "suggestions": [],
+  "confidence": 0.9
+}
+
+**Respond with ONLY the JSON object.**`;
   }
 
-  private buildIntegrationTestInstructionsForChunk(coverageLevel: string, criteriaCount: number): string {
+  private buildIntegrationTestInstructionsForChunk(coverageLevel: string, criteriaCount: number, customRequirements?: string): string {
+    if (coverageLevel === 'custom' && customRequirements) {
+      return `## Testing Instructions
+**INTEGRATION TESTING:** Create test scenarios that validate the custom requirements through system integrations.
+**CUSTOM COVERAGE:** Generate test cases ONLY for the custom requirements specified above.
+
+**Expected Output:** Integration test scenarios that directly validate the custom requirements above.
+
+**Test Scenario Requirements:**
+- Each scenario must map to specific custom requirements
+- Focus EXCLUSIVELY on the custom requirements specified
+- Include realistic end-to-end workflows and data flow for custom requirements
+- Test actual system integrations where appropriate for custom requirements
+- Provide clear, executable test steps
+- Focus only on the custom requirements - ignore standard acceptance criteria
+- Validate complete user journeys and system interactions for custom requirements
+
+**IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Each scenario should validate how the custom requirements integrate with other system components.
+
+**JSON Response Format:** Return your response as a valid JSON object with the structure:
+{
+  "testCases": [
+    {
+      "title": "Test scenario name",
+      "description": "What custom requirement integration this validates",
+      "type": "integration",
+      "priority": "medium",
+      "steps": [{"step": 1, "action": "...", "expectedOutcome": "...", "testData": {}}],
+      "expectedResult": "Overall outcome",
+      "preconditions": "Setup requirements",
+      "testData": {},
+      "estimatedDuration": 15
+    }
+  ],
+  "suggestions": [],
+  "confidence": 0.9
+}
+
+**Respond with ONLY the JSON object.**`;
+    }
+
     const expectedTests = coverageLevel === 'comprehensive' 
       ? Math.min(12, criteriaCount * 3)
       : Math.min(4, criteriaCount + 1);
 
     const coverageGuidance = coverageLevel === 'comprehensive'
-      ? `**COMPREHENSIVE COVERAGE:** Generate 6-12 detailed test cases covering all criteria.`
-      : `**BASIC COVERAGE:** Generate 2-4 essential test cases focusing on core functionality.`;
+      ? `**COMPREHENSIVE COVERAGE:** Generate 6-12 detailed test scenarios covering all criteria.`
+      : `**BASIC COVERAGE:** Generate 2-4 essential test scenarios focusing on core functionality.`;
 
     return `## Testing Instructions
-**INTEGRATION TEST FOCUS:** Test component interactions and end-to-end workflows.
+**INTEGRATION TESTING:** Create test scenarios that validate interactions between user stories and system components.
 ${coverageGuidance}
 
-**Expected Output:** Approximately ${expectedTests} integration test cases that directly validate the acceptance criteria above.
+**Expected Output:** Approximately ${expectedTests} integration test scenarios that directly validate the acceptance criteria above.
 
-**Integration Test Requirements:**
-- Each test case must map to specific acceptance criteria
-- Include realistic test data and expected outcomes  
+**Test Scenario Requirements:**
+- Each scenario must map to specific acceptance criteria
+- Focus on interactions between multiple user stories or components
+- Include realistic end-to-end workflows and data flow
+- Test actual system integrations where appropriate
 - Provide clear, executable test steps
-- Test real system integrations and workflows
 - Focus only on the criteria listed above
-- Validate end-to-end functionality`;
+- Validate complete user journeys and system interactions
+
+**IMPORTANT:** Generate test scenarios (manual or automatable steps), NOT test code. Each scenario should validate how this user story integrates with other system components.
+
+**JSON Response Format:** Return your response as a valid JSON object with the structure:
+{
+  "testCases": [
+    {
+      "title": "Test scenario name",
+      "description": "What integration this validates",
+      "type": "integration",
+      "priority": "medium",
+      "steps": [{"step": 1, "action": "...", "expectedOutcome": "...", "testData": {}}],
+      "expectedResult": "Overall outcome",
+      "preconditions": "Setup requirements",
+      "testData": {},
+      "estimatedDuration": 15
+    }
+  ],
+  "suggestions": [],
+  "confidence": 0.9
+}
+
+**Respond with ONLY the JSON object.**`;
   }
 
   private extractPlainTextFromHTML(html: string): string {
     if (!html) return '';
     
+    // If it's not HTML content, return as-is
+    if (!html.includes('<') || !html.includes('>')) {
+      return html.trim();
+    }
+    
     // Remove HTML tags and clean up text
     const plainText = html
+      .replace(/<style[^>]*>.*?<\/style>/gi, '') // Remove style tags and content
+      .replace(/<script[^>]*>.*?<\/script>/gi, '') // Remove script tags and content
       .replace(/<[^>]*>/g, ' ') // Remove HTML tags
       .replace(/&nbsp;/g, ' ')  // Replace &nbsp; with space
       .replace(/&lt;/g, '<')    // Decode HTML entities
       .replace(/&gt;/g, '>')
       .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
       .replace(/\s+/g, ' ')     // Normalize whitespace
       .trim();
     

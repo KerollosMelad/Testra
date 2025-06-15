@@ -109,12 +109,31 @@ export async function getWorkItemsCount(
 export async function getProjectStats(
   organization: string,
   project: string,
-  pat: string
+  pat: string,
+  projectId?: string
 ) {
   const workItemsResult = await getWorkItemsCount(organization, project, pat);
-  // For now, testsCount is 0 since we don't have test cases stored yet
-  // This can be updated when we implement test case generation and storage
-  const testsCount = 0;
+  
+  // Get test cases count from database if projectId is provided
+  let testsCount = 0;
+  if (projectId) {
+    try {
+      const { supabaseAdmin } = await import('./supabase');
+      const { count, error } = await supabaseAdmin
+        .from('test_cases')
+        .select('*', { count: 'exact', head: true })
+        .eq('project_id', projectId);
+      
+      if (!error && count !== null) {
+        testsCount = count;
+      } else if (error) {
+        console.error('Error fetching test cases count:', error);
+      }
+    } catch (error) {
+      console.error('Error fetching test cases count:', error);
+      // Keep testsCount as 0 if there's an error
+    }
+  }
 
   return {
     storiesCount: workItemsResult.count,

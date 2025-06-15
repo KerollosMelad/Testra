@@ -38,6 +38,7 @@ import {
 import { WorkItem, WorkItemRelation } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { htmlAcceptanceCriteriaToText } from "@/lib/html-to-text";
 
 interface WorkItemsListProps {
   organization: string;
@@ -417,17 +418,7 @@ export function WorkItemsList({
                   </CardDescription>
                 )}
 
-                {/* Acceptance Criteria */}
-                {node.acceptanceCriteria && (
-                  <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="text-xs font-medium text-blue-800 mb-1">
-                      Acceptance Criteria:
-                    </div>
-                    <div className="text-sm text-blue-700 line-clamp-3">
-                      {node.acceptanceCriteria.replace(/<[^>]*>/g, "")}
-                    </div>
-                  </div>
-                )}
+
               </div>
 
               {/* Generate Tests Button */}
