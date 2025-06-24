@@ -28,7 +28,7 @@ interface DuplicateCheckRequest {
 export async function POST(request: NextRequest) {
   try {
     const body: DuplicateCheckRequest = await request.json();
-    const { projectId, testCases, similarityThreshold = 0.95, checkAgainstExistingOnly = true } = body;
+    const { projectId, testCases, similarityThreshold = 0.97, checkAgainstExistingOnly = true } = body;
 
     if (!projectId || !testCases || !Array.isArray(testCases)) {
       return NextResponse.json(
