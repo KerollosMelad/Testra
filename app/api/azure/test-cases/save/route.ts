@@ -286,6 +286,23 @@ async function createWorkItemRelation(project: any, childWorkItemId: number, par
 }
 
 async function saveTestCaseToDatabase(projectId: string, workItemId: string, testCase: TestCaseToSave, azureTestCaseId: string) {
+  // Generate content hash for duplicate detection
+  const content = [
+    testCase.title,
+    testCase.description,
+    JSON.stringify(testCase.steps),
+    testCase.expectedResult
+  ].join('|');
+  
+  // Simple hash function
+  let hash = 0;
+  for (let i = 0; i < content.length; i++) {
+    const char = content.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  const contentHash = Math.abs(hash).toString(16);
+
   // Save to test_cases table
   const { data: savedTestCase, error: testCaseError } = await supabaseAdmin
     .from('test_cases')
@@ -301,6 +318,7 @@ async function saveTestCaseToDatabase(projectId: string, workItemId: string, tes
       test_data: testCase.testData,
       estimated_duration: testCase.estimatedDuration,
       project_id: projectId,
+      content_hash: contentHash, // Add content hash for duplicate detection
       generated_at: new Date().toISOString(),
       generated_by: 'AI',
       generated_code: testCase.generatedCode

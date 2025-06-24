@@ -17,12 +17,16 @@ export async function GET(
       );
     }
 
-    // Get existing test cases for this work item from the database
+    // Get existing test cases for this work item from the database using the relationship table
     // These are test cases that have been saved to the database (and presumably to Azure DevOps)
     const { data: testCases, error } = await supabaseAdmin
       .from('test_cases')
-      .select('*')
+      .select(`
+        *,
+        test_case_work_item_relations!inner(work_item_id)
+      `)
       .eq('project_id', projectId)
+      .eq('test_case_work_item_relations.work_item_id', workItemId)
       .order('created_at', { ascending: false });
 
     if (error) {

@@ -89,7 +89,7 @@ export default function TestGenerationPage() {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'configure' | 'streaming' | 'results'>('configure');
   
-  // Existing saved tests for duplicate detection
+  // Existing saved tests for this work item only (for duplicate detection)
   const [existingSavedTests, setExistingSavedTests] = useState<SavedTestCase[]>([]);
   
   // Streaming state
@@ -120,7 +120,7 @@ export default function TestGenerationPage() {
 
   const [activeTab, setActiveTab] = useState('work-item');
 
-  // Refresh existing test cases
+  // Refresh existing test cases for this work item only
   const refreshExistingTests = async () => {
     try {
       const existingTestsResponse = await fetch(
@@ -138,7 +138,7 @@ export default function TestGenerationPage() {
         });
       }
     } catch (error) {
-      console.error('Error refreshing existing tests:', error);
+      console.error('Error refreshing existing tests for work item:', error);
     }
   };
 
@@ -154,7 +154,7 @@ export default function TestGenerationPage() {
         const workItemData = await workItemResponse.json();
         setWorkItem(workItemData.workItem);
 
-        // Fetch existing saved test cases for this work item (for duplicate detection)
+        // Fetch existing saved test cases for this work item only (for duplicate detection)
         await refreshExistingTests();
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -231,10 +231,10 @@ export default function TestGenerationPage() {
     return Math.abs(hash).toString(16);
   };
 
-  // Check for duplicates using vector embeddings against existing saved test cases
+  // Check for duplicates using vector embeddings against existing saved test cases for this work item only
   const checkAndMarkDuplicates = async (testCases: StreamingTestCase[]): Promise<StreamingTestCase[]> => {
     try {
-      console.log('Checking generated test cases against existing saved test cases with vector embeddings');
+      console.log('Checking generated test cases against existing saved test cases for this work item with vector embeddings');
       // If no test cases to check, return as is
       if (!testCases || testCases.length === 0) {
         return testCases;
@@ -248,6 +248,7 @@ export default function TestGenerationPage() {
         },
         body: JSON.stringify({
           projectId,
+          workItemId, // Scope duplicate checking to this work item only
           testCases: testCases.map(tc => ({
             title: tc.title,
             description: tc.description,
@@ -304,10 +305,10 @@ export default function TestGenerationPage() {
     }
   };
 
-  // Batch check all generated test cases after streaming is complete
+  // Batch check all generated test cases after streaming is complete (scoped to this work item only)
   const batchCheckAllDuplicates = async (allTestCases: StreamingTestCase[]): Promise<StreamingTestCase[]> => {
     try {
-      console.log(`Performing batch duplicate check for ${allTestCases.length} generated test cases against existing saved test cases`);
+      console.log(`Performing batch duplicate check for ${allTestCases.length} generated test cases against existing saved test cases for work item ${workItemId}`);
       
       if (!allTestCases || allTestCases.length === 0) {
         return allTestCases;
@@ -321,6 +322,7 @@ export default function TestGenerationPage() {
         },
         body: JSON.stringify({
           projectId,
+          workItemId, // Scope duplicate checking to this work item only
           testCases: allTestCases.map(tc => ({
             title: tc.title,
             description: tc.description,
@@ -379,13 +381,15 @@ export default function TestGenerationPage() {
     }
   };
 
-  // Fallback local duplicate checking (original implementation)
+  // Fallback local duplicate checking (scoped to this work item only)
   const checkAndMarkDuplicatesLocal = (testCases: StreamingTestCase[]): StreamingTestCase[] => {
+    console.log(`Performing local duplicate check against ${existingSavedTests.length} existing test cases for work item ${workItemId}`);
+    
     return testCases.map(testCase => {
       const hash = generateContentHash(testCase);
       const semanticSignature = extractSemanticSignature(testCase);
       
-      // First try exact hash match
+      // First try exact hash match against existing test cases for this work item only
       let duplicate = existingSavedTests.find(saved => saved.contentHash === hash);
       let duplicateType: 'exact' | 'semantic' | undefined;
       let similarityScore: number | undefined;
@@ -395,6 +399,7 @@ export default function TestGenerationPage() {
         similarityScore = 1.0;
       } else {
         // If no exact match, try semantic similarity (threshold: 0.8 = 80% similarity)
+        // Only check against existing test cases for this work item
         let bestMatch: SavedTestCase | undefined;
         let bestSimilarity = 0;
         
@@ -438,6 +443,17 @@ export default function TestGenerationPage() {
     // Create abort controller for cancellation
     abortControllerRef.current = new AbortController();
 
+    // Add a timeout to prevent hanging forever
+    const streamingTimeout = setTimeout(() => {
+      if (abortControllerRef.current) {
+        console.warn('Streaming timeout reached, aborting request');
+        abortControllerRef.current.abort();
+        setError('Generation process timed out. Please try again with simpler requirements.');
+        setStep('configure');
+        setStreaming(false);
+      }
+    }, 5 * 60 * 1000); // 5 minutes timeout
+
     try {
       const response = await fetch('/api/ai/generate-tests/stream', {
         method: 'POST',
@@ -468,11 +484,33 @@ export default function TestGenerationPage() {
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let lastDataTime = Date.now();
+      let hasReceivedData = false;
+
+      // Check for data timeout every 30 seconds
+      const dataTimeoutCheck = setInterval(() => {
+        const now = Date.now();
+        if (hasReceivedData && now - lastDataTime > 120000) { // 2 minutes without data
+          console.warn('No data received for 2 minutes, aborting');
+          clearInterval(dataTimeoutCheck);
+          if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            setError('Connection timed out. No data received for 2 minutes.');
+            setStep('configure');
+            setStreaming(false);
+          }
+        }
+      }, 30000);
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          clearInterval(dataTimeoutCheck);
+          break;
+        }
 
+        hasReceivedData = true;
+        lastDataTime = Date.now();
         buffer += decoder.decode(value, { stream: true });
         
         // Process complete lines
@@ -491,12 +529,16 @@ export default function TestGenerationPage() {
         }
       }
 
+      clearInterval(dataTimeoutCheck);
+
     } catch (err: any) {
       if (err.name !== 'AbortError') {
+        console.error('Stream error:', err);
         setError(err.message || 'Failed to generate test cases');
         setStep('configure');
       }
     } finally {
+      clearTimeout(streamingTimeout);
       setStreaming(false);
     }
   };
@@ -570,7 +612,7 @@ export default function TestGenerationPage() {
   };
 
   const goBack = () => {
-    router.push(`/projects/${projectId}/stories`);
+    router.push(`/projects/${projectId}`);
   };
 
   const getTestCaseId = (chunkId: string, testIndex: number) => {
@@ -817,7 +859,7 @@ export default function TestGenerationPage() {
       const result = await response.json();
       setSaveSuccess(true);
       
-      // Refresh existing tests to update duplicate detection
+      // Refresh existing tests for this work item to update duplicate detection
       await refreshExistingTests();
       
       // Switch to existing tests tab to show the newly saved test cases
@@ -1040,7 +1082,7 @@ export default function TestGenerationPage() {
           className="mb-4"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Stories
+          Back to Project
         </Button>
         
         <div className="flex items-center gap-3 mb-2">
@@ -1060,7 +1102,7 @@ export default function TestGenerationPage() {
           </TabsTrigger>
           <TabsTrigger value="existing-tests" className="flex items-center gap-2">
             <CheckCircle className="h-4 w-4" />
-            Existing Tests ({existingSavedTests.length})
+            Work Item Tests ({existingSavedTests.length})
           </TabsTrigger>
           <TabsTrigger value="generate" className="flex items-center gap-2">
             <Sparkles className="h-4 w-4" />
@@ -1136,10 +1178,10 @@ export default function TestGenerationPage() {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <CheckCircle className="h-5 w-5 text-green-600" />
-                    Existing Saved Test Cases ({existingSavedTests.length})
+                    Existing Test Cases for This Work Item ({existingSavedTests.length})
                   </CardTitle>
                   <CardDescription>
-                    These test cases are already saved to Azure DevOps. You can select multiple test cases for bulk operations.
+                    These test cases are already saved to Azure DevOps for work item #{workItem.id}. You can select multiple test cases for bulk operations.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -1188,13 +1230,13 @@ export default function TestGenerationPage() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <AlertCircle className="h-5 w-5 text-muted-foreground" />
-                  No Existing Test Cases
-                </CardTitle>
-                <CardDescription>
-                  No test cases have been saved for this work item yet. Use the "Generate New Tests" tab to create some.
-                </CardDescription>
+                              <CardTitle className="text-lg flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-muted-foreground" />
+                No Test Cases for This Work Item
+              </CardTitle>
+              <CardDescription>
+                No test cases have been saved for work item #{workItem.id} yet. Use the "Generate New Tests" tab to create some.
+              </CardDescription>
               </CardHeader>
               <CardContent>
                 <Button 

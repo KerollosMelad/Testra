@@ -1,9 +1,11 @@
 import OpenAI from 'openai';
 
-// Create OpenAI client with provided API key
+// Create OpenAI client with provided API key and timeout configuration
 export function createOpenAIClient(apiKey: string): OpenAI {
   return new OpenAI({
     apiKey: apiKey,
+    timeout: 60000, // 60 seconds timeout to prevent hanging
+    maxRetries: 2,  // Retry failed requests up to 2 times
   });
 }
 
