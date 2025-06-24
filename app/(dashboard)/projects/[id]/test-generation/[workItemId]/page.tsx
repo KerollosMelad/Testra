@@ -11,6 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { Loader2, Sparkles, CheckCircle, AlertCircle, Code, FileText, Zap, ArrowLeft, ChevronUp, ChevronDown, Eye, Save, Square, Trash2 } from "lucide-react";
 import { WorkItem, EnhancedTestCase } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -115,6 +116,15 @@ export default function TestGenerationPage() {
   // Selection state for existing test cases
   const [selectedExistingTestCases, setSelectedExistingTestCases] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
+  const [duplicateTestCases, setDuplicateTestCases] = useState<Array<StreamingTestCase & { id: string }>>([]);
+  const [showDuplicateDetails, setShowDuplicateDetails] = useState(false);
+  const [duplicateDetailsData, setDuplicateDetailsData] = useState<Array<StreamingTestCase & { id: string }>>([]);
+  const [showComparisonDialog, setShowComparisonDialog] = useState(false);
+  const [comparisonData, setComparisonData] = useState<{
+    currentTestCase: StreamingTestCase & { id: string };
+    existingTestCase: SavedTestCase | null;
+  } | null>(null);
   
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -647,9 +657,7 @@ export default function TestGenerationPage() {
   };
 
   const handleSelectAll = () => {
-    const allIds = getAllTestCasesWithIds()
-      .filter(tc => !tc.isDuplicate) // Only select non-duplicates
-      .map(tc => tc.id);
+    const allIds = getAllTestCasesWithIds().map(tc => tc.id);
     setSelectedTestCases(new Set(allIds));
   };
 
@@ -810,34 +818,49 @@ export default function TestGenerationPage() {
   };
 
   const handleSaveSelected = async () => {
+    const allTestCases = getAllTestCasesWithIds();
+    const selectedTestCasesToSave = allTestCases.filter(tc => selectedTestCases.has(tc.id));
+    
+    if (selectedTestCasesToSave.length === 0) {
+      setSaveError('No test cases selected for saving');
+      return;
+    }
+
+    // Check if any selected test cases are duplicates
+    const duplicates = selectedTestCasesToSave.filter(tc => tc.isDuplicate);
+    
+    if (duplicates.length > 0) {
+      // Show warning dialog for duplicates
+      setDuplicateTestCases(duplicates);
+      setShowDuplicateWarning(true);
+      return;
+    }
+
+    // No duplicates, proceed with save
+    await performSave(selectedTestCasesToSave);
+  };
+
+  const performSave = async (testCasesToSave: Array<StreamingTestCase & { id: string }>) => {
     setSaving(true);
     setSaveError(null);
     setSaveSuccess(false);
 
     try {
-      const allTestCases = getAllTestCasesWithIds();
-      const selectedTestCasesToSave = allTestCases
-        .filter(tc => selectedTestCases.has(tc.id) && !tc.isDuplicate)
-        .map(tc => ({
-          title: tc.title,
-          description: tc.description,
-          type: tc.type,
-          priority: tc.priority,
-          steps: tc.steps,
-          expectedResult: tc.expectedResult,
-          preconditions: tc.preconditions,
-          testData: tc.testData,
-          estimatedDuration: tc.estimatedDuration,
-          generatedCode: tc.generatedCode,
-          coveredCriteria: tc.coveredCriteria,
-          chunkId: tc.chunkId,
-          testCaseId: tc.id
-        }));
-
-      if (selectedTestCasesToSave.length === 0) {
-        setSaveError('No valid test cases selected for saving');
-        return;
-      }
+      const formattedTestCases = testCasesToSave.map(tc => ({
+        title: tc.title,
+        description: tc.description,
+        type: tc.type,
+        priority: tc.priority,
+        steps: tc.steps,
+        expectedResult: tc.expectedResult,
+        preconditions: tc.preconditions,
+        testData: tc.testData,
+        estimatedDuration: tc.estimatedDuration,
+        generatedCode: tc.generatedCode,
+        coveredCriteria: tc.coveredCriteria,
+        chunkId: tc.chunkId,
+        testCaseId: tc.id
+      }));
 
       const response = await fetch('/api/azure/test-cases/save', {
         method: 'POST',
@@ -847,7 +870,7 @@ export default function TestGenerationPage() {
         body: JSON.stringify({
           projectId,
           workItemId,
-          testCases: selectedTestCasesToSave,
+          testCases: formattedTestCases,
         }),
       });
 
@@ -872,6 +895,33 @@ export default function TestGenerationPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveWithDuplicates = async () => {
+    setShowDuplicateWarning(false);
+    const allTestCases = getAllTestCasesWithIds();
+    const selectedTestCasesToSave = allTestCases.filter(tc => selectedTestCases.has(tc.id));
+    await performSave(selectedTestCasesToSave);
+  };
+
+  const handleShowDuplicateDetails = () => {
+    const allTestCases = getAllTestCasesWithIds();
+    const duplicates = allTestCases.filter(tc => tc.isDuplicate);
+    setDuplicateDetailsData(duplicates);
+    setShowDuplicateDetails(true);
+  };
+
+  const handleShowComparison = async (currentTestCase: StreamingTestCase & { id: string }) => {
+    if (!currentTestCase.duplicateOf) return;
+    
+    // Find the existing test case from our saved tests
+    const existingTestCase = existingSavedTests.find(tc => tc.id === currentTestCase.duplicateOf);
+    
+    setComparisonData({
+      currentTestCase,
+      existingTestCase: existingTestCase || null
+    });
+    setShowComparisonDialog(true);
   };
 
   const getTestTypeDescription = (type: string) => {
@@ -911,18 +961,18 @@ export default function TestGenerationPage() {
       
       return (
         <div className="flex items-center gap-1 ml-2">
-          <Badge variant="secondary">
+          <Badge variant="outline" className="border-orange-500 text-orange-700 bg-orange-50">
             <AlertCircle className="w-3 h-3 mr-1" />
-            Already Saved
+            Possible Duplicate
           </Badge>
-          <Badge variant="outline" className="text-xs border-orange-200 text-orange-700">
+          <Badge variant="outline" className="text-xs border-orange-200 text-orange-600">
             {isExactMatch ? 'Exact Match' : `${similarity}% Similar`}
           </Badge>
         </div>
       );
     }
     return (
-      <Badge variant="outline" className="ml-2 border-green-200 text-green-700">
+      <Badge variant="outline" className="ml-2 border-green-200 text-green-700 bg-green-50">
         <CheckCircle className="w-3 h-3 mr-1" />
         New
       </Badge>
@@ -1451,14 +1501,13 @@ export default function TestGenerationPage() {
                                 {chunk.testCases.map((testCase, testIndex) => {
                                   const testCaseId = getTestCaseId(chunk.chunkId, testIndex);
                                   return (
-                                    <Card key={testCaseId} className={`${testCase.isDuplicate ? 'opacity-60 border-orange-200' : ''}`}>
+                                    <Card key={testCaseId} className={`${testCase.isDuplicate ? 'border-orange-200' : ''}`}>
                                       <CardHeader className="pb-3">
                                         <div className="flex items-start justify-between">
                                           <div className="flex items-center gap-2">
                                             <Checkbox
-                                              checked={selectedTestCases.has(testCaseId) && !testCase.isDuplicate}
+                                              checked={selectedTestCases.has(testCaseId)}
                                               onCheckedChange={(checked) => handleTestCaseSelect(testCaseId, checked as boolean)}
-                                              disabled={testCase.isDuplicate}
                                             />
                                             <div>
                                               <div className="flex items-center gap-2">
@@ -1523,14 +1572,47 @@ export default function TestGenerationPage() {
                                             </div>
                                           )}
 
-                                          {testCase.isDuplicate && testCase.duplicateOf && (
-                                            <div className="p-2 bg-orange-50 border border-orange-200 rounded">
-                                              <p className="text-sm text-orange-800">
-                                                <AlertCircle className="w-4 h-4 inline mr-1" />
-                                                This test case is similar to an existing saved test case (ID: {testCase.duplicateOf})
-                                              </p>
+                                                                                  {testCase.isDuplicate && testCase.duplicateOf && (
+                                          <div className="p-3 bg-orange-50 border border-orange-200 rounded-md">
+                                            <div className="flex items-start gap-2">
+                                              <AlertCircle className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
+                                              <div>
+                                                <p className="text-sm font-medium text-orange-800">
+                                                  Possible Duplicate Detected
+                                                </p>
+                                                <p className="text-xs text-orange-700 mt-1">
+                                                  {testCase.duplicateType === 'exact' 
+                                                    ? (
+                                                      <>
+                                                        This test case exactly matches an existing saved test case.{' '}
+                                                        <button
+                                                          onClick={() => handleShowComparison({...testCase, id: testCaseId})}
+                                                          className="text-blue-600 hover:text-blue-800 underline font-medium"
+                                                        >
+                                                          View comparison
+                                                        </button>
+                                                      </>
+                                                    )
+                                                    : (
+                                                      <>
+                                                        This test case is {Math.round((testCase.similarityScore || 0) * 100)}% similar to an existing saved test case.{' '}
+                                                        <button
+                                                          onClick={() => handleShowComparison({...testCase, id: testCaseId})}
+                                                          className="text-blue-600 hover:text-blue-800 underline font-medium"
+                                                        >
+                                                          View comparison
+                                                        </button>
+                                                      </>
+                                                    )
+                                                  }
+                                                </p>
+                                                <p className="text-xs text-orange-600 mt-2">
+                                                  ⚠️ You can still save this test case if it serves a different purpose or tests different scenarios.
+                                                </p>
+                                              </div>
                                             </div>
-                                          )}
+                                          </div>
+                                        )}
                                         </div>
                                       </CardContent>
                                     </Card>
@@ -1597,7 +1679,7 @@ export default function TestGenerationPage() {
                       variant="outline"
                       size="sm"
                     >
-                      Select All New
+                      Select All
                     </Button>
                     <Button
                       onClick={handleDeselectAll}
@@ -1620,6 +1702,17 @@ export default function TestGenerationPage() {
                       )}
                       Re-check Duplicates
                     </Button>
+                    {getAllTestCasesWithIds().filter(tc => tc.isDuplicate).length > 0 && (
+                      <Button
+                        onClick={handleShowDuplicateDetails}
+                        variant="outline"
+                        size="sm"
+                        className="flex items-center gap-2 border-orange-200 text-orange-700 hover:bg-orange-50"
+                      >
+                        <AlertCircle className="h-4 w-4" />
+                        View Duplicates ({getAllTestCasesWithIds().filter(tc => tc.isDuplicate).length})
+                      </Button>
+                    )}
                     <div className="flex-1" />
                     <Button
                       onClick={handleSaveSelected}
@@ -1700,14 +1793,13 @@ export default function TestGenerationPage() {
                               {chunk.testCases.map((testCase, testIndex) => {
                                 const testCaseId = getTestCaseId(chunk.chunkId, testIndex);
                                 return (
-                                  <Card key={testCaseId} className={`${testCase.isDuplicate ? 'opacity-60 border-orange-200' : ''}`}>
+                                  <Card key={testCaseId} className={`${testCase.isDuplicate ? 'border-orange-200' : ''}`}>
                                     <CardHeader className="pb-3">
                                       <div className="flex items-start justify-between">
                                         <div className="flex items-center gap-2">
                                           <Checkbox
-                                            checked={selectedTestCases.has(testCaseId) && !testCase.isDuplicate}
+                                            checked={selectedTestCases.has(testCaseId)}
                                             onCheckedChange={(checked) => handleTestCaseSelect(testCaseId, checked as boolean)}
-                                            disabled={testCase.isDuplicate}
                                           />
                                           <div>
                                             <div className="flex items-center gap-2">
@@ -1773,14 +1865,44 @@ export default function TestGenerationPage() {
                                         )}
 
                                         {testCase.isDuplicate && testCase.duplicateOf && (
-                                          <div className="p-2 bg-orange-50 border border-orange-200 rounded">
-                                            <p className="text-sm text-orange-800">
-                                              <AlertCircle className="w-4 h-4 inline mr-1" />
-                                              {testCase.duplicateType === 'exact' 
-                                                ? `This test case exactly matches an existing saved test case (ID: ${testCase.duplicateOf})`
-                                                : `This test case is ${Math.round((testCase.similarityScore || 0) * 100)}% similar to an existing saved test case (ID: ${testCase.duplicateOf})`
-                                              }
-                                            </p>
+                                          <div className="p-3 bg-orange-50 border border-orange-200 rounded-md">
+                                            <div className="flex items-start gap-2">
+                                              <AlertCircle className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
+                                              <div>
+                                                <p className="text-sm font-medium text-orange-800">
+                                                  Possible Duplicate Detected
+                                                </p>
+                                                <p className="text-xs text-orange-700 mt-1">
+                                                  {testCase.duplicateType === 'exact' 
+                                                    ? (
+                                                      <>
+                                                        This test case exactly matches an existing saved test case.{' '}
+                                                        <button
+                                                          onClick={() => handleShowComparison({...testCase, id: testCaseId})}
+                                                          className="text-blue-600 hover:text-blue-800 underline font-medium"
+                                                        >
+                                                          View comparison
+                                                        </button>
+                                                      </>
+                                                    )
+                                                    : (
+                                                      <>
+                                                        This test case is {Math.round((testCase.similarityScore || 0) * 100)}% similar to an existing saved test case.{' '}
+                                                        <button
+                                                          onClick={() => handleShowComparison({...testCase, id: testCaseId})}
+                                                          className="text-blue-600 hover:text-blue-800 underline font-medium"
+                                                        >
+                                                          View comparison
+                                                        </button>
+                                                      </>
+                                                    )
+                                                  }
+                                                </p>
+                                                <p className="text-xs text-orange-600 mt-2">
+                                                  ⚠️ You can still save this test case if it serves a different purpose or tests different scenarios.
+                                                </p>
+                                              </div>
+                                            </div>
                                           </div>
                                         )}
                                       </div>
@@ -1831,6 +1953,351 @@ export default function TestGenerationPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* Duplicate Warning Dialog */}
+      <AlertDialog open={showDuplicateWarning} onOpenChange={setShowDuplicateWarning}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-orange-600" />
+              Duplicate Test Cases Detected
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              You have selected {duplicateTestCases.length} test case{duplicateTestCases.length > 1 ? 's' : ''} that {duplicateTestCases.length === 1 ? 'appears' : 'appear'} to be {duplicateTestCases.length === 1 ? 'a duplicate' : 'duplicates'} of existing saved test cases. 
+              
+              <div className="mt-4 space-y-2">
+                {duplicateTestCases.map((testCase, index) => (
+                  <div key={testCase.id} className="p-3 bg-orange-50 border border-orange-200 rounded-md">
+                    <div className="font-medium text-sm">{testCase.title}</div>
+                    <div className="text-xs text-orange-700 mt-1">
+                      {testCase.duplicateType === 'exact' 
+                        ? 'Exact match with existing test case'
+                        : `${Math.round((testCase.similarityScore || 0) * 100)}% similar to existing test case`
+                      }
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              <div className="mt-4 text-sm">
+                <strong>Do you want to save them anyway?</strong> Sometimes similar test cases may have different purposes or test different scenarios.
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleSaveWithDuplicates}
+              className="bg-orange-600 hover:bg-orange-700"
+            >
+              Save Anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Duplicate Details Dialog */}
+      <AlertDialog open={showDuplicateDetails} onOpenChange={setShowDuplicateDetails}>
+        <AlertDialogContent className="max-w-4xl max-h-[80vh] overflow-hidden">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-orange-600" />
+              Possible Duplicates Detected ({duplicateDetailsData.length})
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The following test cases appear to be similar to existing saved test cases. Review them to decide if they should be saved anyway.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          
+          <div className="overflow-y-auto max-h-[50vh] space-y-4 py-4">
+            {duplicateDetailsData.map((testCase, index) => (
+              <div key={testCase.id} className="border border-orange-200 rounded-lg p-4 bg-orange-50/50">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-gray-900 mb-1">{testCase.title}</h4>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-orange-100 text-orange-800 border-orange-200">
+                        {testCase.duplicateType === 'exact' ? 'Exact Match' : `${Math.round((testCase.similarityScore || 0) * 100)}% Similar`}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {testCase.type} • {testCase.priority}
+                      </Badge>
+                    </div>
+                  </div>
+                  <Checkbox
+                    checked={selectedTestCases.has(testCase.id)}
+                    onCheckedChange={(checked) => handleTestCaseSelect(testCase.id, checked as boolean)}
+                    className="mt-1"
+                  />
+                </div>
+                
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <p className="font-medium text-gray-700 mb-1">Description:</p>
+                    <p className="text-gray-600">{testCase.description}</p>
+                  </div>
+                  
+                  {testCase.steps && testCase.steps.length > 0 && (
+                    <div>
+                      <p className="font-medium text-gray-700 mb-1">Test Steps:</p>
+                      <ol className="list-decimal list-inside text-gray-600 space-y-1 ml-2">
+                        {testCase.steps.slice(0, 3).map((step, stepIndex) => (
+                          <li key={stepIndex}>
+                            <span className="font-medium">{step.action}</span>
+                            {step.expectedOutcome && (
+                              <span className="text-green-600"> → {step.expectedOutcome}</span>
+                            )}
+                          </li>
+                        ))}
+                        {testCase.steps.length > 3 && (
+                          <li className="text-gray-400 italic">... and {testCase.steps.length - 3} more steps</li>
+                        )}
+                      </ol>
+                    </div>
+                  )}
+                  
+                  <div className="p-2 bg-orange-100 border border-orange-200 rounded text-orange-800">
+                    <p className="text-xs">
+                      <strong>Duplicate Info:</strong> {testCase.duplicateType === 'exact' 
+                        ? `Exactly matches existing test case (ID: ${testCase.duplicateOf})`
+                        : `${Math.round((testCase.similarityScore || 0) * 100)}% similar to existing test case (ID: ${testCase.duplicateOf})`
+                      }
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <AlertDialogFooter className="flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              {duplicateDetailsData.filter(tc => selectedTestCases.has(tc.id)).length} of {duplicateDetailsData.length} duplicates selected for saving
+            </div>
+            <div className="flex gap-2">
+              <AlertDialogCancel>Close</AlertDialogCancel>
+              <Button
+                onClick={() => {
+                  setShowDuplicateDetails(false);
+                  handleSaveSelected();
+                }}
+                disabled={selectedTestCases.size === 0}
+                className="bg-orange-600 hover:bg-orange-700"
+              >
+                Save Selected ({selectedTestCases.size})
+              </Button>
+            </div>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Test Case Comparison Dialog */}
+      <AlertDialog open={showComparisonDialog} onOpenChange={setShowComparisonDialog}>
+        <AlertDialogContent className="max-w-6xl max-h-[90vh] overflow-hidden">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-orange-600" />
+              Test Case Comparison
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Compare the new test case with the existing similar test case to decide if they serve different purposes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          
+          {comparisonData && (
+            <div className="overflow-y-auto max-h-[70vh] py-4">
+              <div className="grid grid-cols-2 gap-6">
+                {/* New Test Case */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                    <h3 className="text-lg font-semibold text-blue-700">New Test Case</h3>
+                    <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+                      {comparisonData.currentTestCase.duplicateType === 'exact' 
+                        ? 'Exact Match' 
+                        : `${Math.round((comparisonData.currentTestCase.similarityScore || 0) * 100)}% Similar`
+                      }
+                    </Badge>
+                  </div>
+                  
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">{comparisonData.currentTestCase.title}</CardTitle>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          {comparisonData.currentTestCase.type}
+                        </Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {comparisonData.currentTestCase.priority} priority
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div>
+                        <h5 className="font-semibold text-sm mb-2">Description:</h5>
+                        <p className="text-sm text-gray-600">{comparisonData.currentTestCase.description}</p>
+                      </div>
+                      
+                      {comparisonData.currentTestCase.steps && comparisonData.currentTestCase.steps.length > 0 && (
+                        <div>
+                          <h5 className="font-semibold text-sm mb-2">Test Steps:</h5>
+                          <ol className="list-decimal list-inside text-sm text-gray-600 space-y-2 ml-2">
+                            {comparisonData.currentTestCase.steps.map((step, stepIndex) => (
+                              <li key={stepIndex} className="leading-relaxed">
+                                <span className="font-medium">{step.action}</span>
+                                {step.expectedOutcome && (
+                                  <div className="text-green-600 ml-4 mt-1">
+                                    <strong>Expected:</strong> {step.expectedOutcome}
+                                  </div>
+                                )}
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      )}
+                      
+                      <div>
+                        <h5 className="font-semibold text-sm mb-2">Expected Result:</h5>
+                        <p className="text-sm text-gray-600">{comparisonData.currentTestCase.expectedResult}</p>
+                      </div>
+                      
+                      {comparisonData.currentTestCase.preconditions && (
+                        <div>
+                          <h5 className="font-semibold text-sm mb-2">Preconditions:</h5>
+                          <p className="text-sm text-gray-600">{comparisonData.currentTestCase.preconditions}</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+                
+                {/* Existing Test Case */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+                    <h3 className="text-lg font-semibold text-orange-700">Existing Test Case</h3>
+                    <Badge className="bg-orange-100 text-orange-800 border-orange-200">
+                      Already Saved
+                    </Badge>
+                  </div>
+                  
+                  {comparisonData.existingTestCase ? (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-base">{comparisonData.existingTestCase.title}</CardTitle>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs">
+                            {comparisonData.existingTestCase.type}
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">
+                            {comparisonData.existingTestCase.priority} priority
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">
+                            {comparisonData.existingTestCase.status}
+                          </Badge>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div>
+                          <h5 className="font-semibold text-sm mb-2">Description:</h5>
+                          <p className="text-sm text-gray-600">{comparisonData.existingTestCase.description}</p>
+                        </div>
+                        
+                        {comparisonData.existingTestCase.steps && comparisonData.existingTestCase.steps.length > 0 && (
+                          <div>
+                            <h5 className="font-semibold text-sm mb-2">Test Steps:</h5>
+                            <ol className="list-decimal list-inside text-sm text-gray-600 space-y-2 ml-2">
+                              {comparisonData.existingTestCase.steps.map((step, stepIndex) => (
+                                <li key={stepIndex} className="leading-relaxed">
+                                  <span className="font-medium">{step.action}</span>
+                                  {step.expectedOutcome && (
+                                    <div className="text-green-600 ml-4 mt-1">
+                                      <strong>Expected:</strong> {step.expectedOutcome}
+                                    </div>
+                                  )}
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+                        )}
+                        
+                        <div>
+                          <h5 className="font-semibold text-sm mb-2">Expected Result:</h5>
+                          <p className="text-sm text-gray-600">{comparisonData.existingTestCase.expectedResult}</p>
+                        </div>
+                        
+                        {comparisonData.existingTestCase.preconditions && (
+                          <div>
+                            <h5 className="font-semibold text-sm mb-2">Preconditions:</h5>
+                            <p className="text-sm text-gray-600">{comparisonData.existingTestCase.preconditions}</p>
+                          </div>
+                        )}
+                        
+                        <div className="text-xs text-gray-500 pt-2 border-t">
+                          <strong>Test Case ID:</strong> {comparisonData.existingTestCase.id}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <Card>
+                      <CardContent className="p-6 text-center">
+                        <p className="text-gray-500">Existing test case details not available</p>
+                        <p className="text-xs text-gray-400 mt-2">
+                          ID: {comparisonData.currentTestCase.duplicateOf}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </div>
+              
+              {/* Analysis Section */}
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                <h4 className="font-semibold text-gray-800 mb-3">Similarity Analysis</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Match Type:</span>
+                    <Badge className={comparisonData.currentTestCase.duplicateType === 'exact' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}>
+                      {comparisonData.currentTestCase.duplicateType === 'exact' ? 'Exact Match' : 'Semantic Similarity'}
+                    </Badge>
+                  </div>
+                  {comparisonData.currentTestCase.similarityScore && (
+                    <div className="flex items-center justify-between">
+                      <span>Similarity Score:</span>
+                      <span className="font-medium">{Math.round(comparisonData.currentTestCase.similarityScore * 100)}%</span>
+                    </div>
+                  )}
+                  <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded text-blue-800">
+                    <p className="text-xs">
+                      <strong>💡 Consider:</strong> Even similar test cases can serve different purposes. 
+                      They might test different edge cases, use different test data, or validate different aspects of the same functionality.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          <AlertDialogFooter className="flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              Review both test cases to decide if the new one adds unique testing value
+            </div>
+            <div className="flex gap-2">
+              <AlertDialogCancel>Close</AlertDialogCancel>
+              <Button
+                onClick={() => {
+                  if (comparisonData) {
+                    handleTestCaseSelect(comparisonData.currentTestCase.id, true);
+                  }
+                  setShowComparisonDialog(false);
+                }}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                Select for Saving
+              </Button>
+            </div>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 } 

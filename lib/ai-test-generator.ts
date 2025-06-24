@@ -1,4 +1,4 @@
-import { createOpenAIClient, OpenAITestGenerationResponse } from './openai';
+import { createOpenAIClient, OpenAITestGenerationResponse, handleOpenAIError, retryWithBackoff } from './openai';
 import { WorkItem, TestCase, TestGenerationContext, TestGenerationResult, EnhancedTestCase } from './types';
 import { createEmbeddingService } from './embedding-service';
 import OpenAI from 'openai';
@@ -193,14 +193,21 @@ export class AITestGenerator {
   private async getAIResponse(prompt: string, testType: string = 'integration'): Promise<OpenAITestGenerationResponse> {
     const completionParams = this.buildCompletionParams(prompt, testType);
 
-    const completion = await this.openai.chat.completions.create(completionParams);
+    try {
+      const completion = await retryWithBackoff(async () => {
+        return await this.openai.chat.completions.create(completionParams);
+      }, 3, 2000); // 3 retries with 2 second base delay
 
-    const response = completion.choices[0]?.message?.content;
-    if (!response) {
-      throw new Error('No response from OpenAI');
+      const response = completion.choices[0]?.message?.content;
+      if (!response) {
+        throw new Error('No response from OpenAI');
+      }
+
+      return this.parseAIResponse(response);
+    } catch (error) {
+      console.error('OpenAI API call failed:', error);
+      throw handleOpenAIError(error);
     }
-
-    return this.parseAIResponse(response);
   }
 
   private buildCompletionParams(prompt: string, testType: string = 'integration'): any {
