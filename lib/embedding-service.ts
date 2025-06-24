@@ -310,7 +310,7 @@ export class EmbeddingService {
   async checkTestCasesForDuplicates(
     testCases: (TestCase | Partial<TestCase>)[],
     projectId?: string,
-    similarityThreshold: number = 0.95,
+    similarityThreshold: number = 0.97,
     checkAgainstExistingOnly: boolean = true
   ): Promise<Array<{
     testCase: TestCase | Partial<TestCase>;

@@ -257,7 +257,7 @@ export default function TestGenerationPage() {
             expectedResult: tc.expectedResult,
             preconditions: tc.preconditions,
           })),
-          similarityThreshold: 0.95, // 95% similarity threshold - more precise duplicate detection
+          similarityThreshold: 0.97, // 95% similarity threshold - more precise duplicate detection
           checkAgainstExistingOnly: true, // Ensure we only check against saved test cases
         }),
       });
@@ -330,7 +330,7 @@ export default function TestGenerationPage() {
             expectedResult: tc.expectedResult,
             preconditions: tc.preconditions,
           })),
-          similarityThreshold: 0.95, // 95% similarity threshold - more precise duplicate detection
+          similarityThreshold: 0.97, // 95% similarity threshold - more precise duplicate detection
           checkAgainstExistingOnly: true,
         }),
       });
