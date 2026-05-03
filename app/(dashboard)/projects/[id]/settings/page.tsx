@@ -75,6 +75,8 @@ export default function ProjectSettingsPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [testingOpenAI, setTestingOpenAI] = useState(false);
+  const [openAITestResult, setOpenAITestResult] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [projectName, setProjectName] = useState<string>("");
   const router = useRouter();
@@ -168,6 +170,35 @@ export default function ProjectSettingsPage() {
       toast.error("Connection test failed");
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleTestOpenAI = async (values: FormValues) => {
+    setTestingOpenAI(true);
+    setOpenAITestResult(null);
+    try {
+      const res = await fetch("/api/ai/test-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey: values.openaiApiKey,
+        }),
+      });
+      
+      const result = await res.json();
+      
+      if (result.success) {
+        setOpenAITestResult("success");
+        toast.success("OpenAI connection successful!");
+      } else {
+        setOpenAITestResult("error");
+        toast.error(`OpenAI connection failed: ${result.error}`);
+      }
+    } catch (error) {
+      setOpenAITestResult("error");
+      toast.error("OpenAI connection test failed");
+    } finally {
+      setTestingOpenAI(false);
     }
   };
 
@@ -518,9 +549,30 @@ export default function ProjectSettingsPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>OpenAI API Key</FormLabel>
-                    <FormControl>
-                      <Input type="password" placeholder="sk-..." {...field} />
-                    </FormControl>
+                    <div className="flex gap-2">
+                      <FormControl>
+                        <Input type="password" placeholder="sk-..." {...field} />
+                      </FormControl>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={testingOpenAI || !field.value}
+                        onClick={() => handleTestOpenAI(form.getValues())}
+                        className={`min-w-[100px] ${
+                          openAITestResult === "success"
+                            ? "border-green-500 text-green-600"
+                            : openAITestResult === "error"
+                            ? "border-red-500 text-red-600"
+                            : ""
+                        }`}
+                      >
+                        {testingOpenAI ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          "Test"
+                        )}
+                      </Button>
+                    </div>
                     <div className="text-sm text-gray-500">
                       Get your API key from{" "}
                       <a

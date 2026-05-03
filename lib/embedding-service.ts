@@ -247,7 +247,8 @@ export class EmbeddingService {
   async findSimilarTestCasesByContent(
     testCase: TestCase | Partial<TestCase>,
     similarityThreshold: number = 0.8,
-    projectId?: string
+    projectId?: string,
+    workItemId?: string
   ): Promise<Array<{ id: string; title: string; description: string; type: string; similarity: number; contentHash: string }>> {
     try {
       // Create content from test case
@@ -260,6 +261,7 @@ export class EmbeddingService {
           query_embedding: JSON.stringify(embeddingResult.embedding),
           similarity_threshold: similarityThreshold,
           project_id_param: projectId || null,
+          work_item_id_param: workItemId || null,
           match_count: 10,
         },
       );
@@ -306,12 +308,16 @@ export class EmbeddingService {
     return parts.join("\n");
   }
 
-  // Batch check multiple test cases for duplicates
+  // Batch check multiple test cases for duplicates (optionally scoped to a specific work item)
+  // OPTIMIZATION: This method first checks if there are any existing test cases before
+  // performing expensive embedding operations. If no existing test cases are found,
+  // it immediately returns all test cases as non-duplicates.
   async checkTestCasesForDuplicates(
     testCases: (TestCase | Partial<TestCase>)[],
     projectId?: string,
     similarityThreshold: number = 0.97,
-    checkAgainstExistingOnly: boolean = true
+    checkAgainstExistingOnly: boolean = true,
+    workItemId?: string
   ): Promise<Array<{
     testCase: TestCase | Partial<TestCase>;
     isDuplicate: boolean;
@@ -320,6 +326,67 @@ export class EmbeddingService {
     duplicateType: 'exact' | 'semantic' | 'none';
   }>> {
     const results = [];
+    
+    // Early exit: Check if there are any existing test cases to compare against
+    console.log('Checking for existing test cases before duplicate detection...');
+    
+    let existingTestCasesCount = 0;
+    
+    if (workItemId) {
+      // Check if there are any test cases for this specific work item
+      const { data: workItemTestCases, error: workItemError } = await supabaseAdmin
+        .from('test_case_work_item_relations')
+        .select('test_case_id', { count: 'exact' })
+        .eq('work_item_id', workItemId);
+      
+      if (workItemError) {
+        console.error("Error checking work item test cases count:", workItemError);
+        // Continue with duplicate checking in case of error to be safe
+        existingTestCasesCount = 1;
+      } else {
+        existingTestCasesCount = workItemTestCases?.length || 0;
+      }
+    } else if (projectId) {
+      // Check if there are any test cases in the project
+      const { count, error: countError } = await supabaseAdmin
+        .from('test_cases')
+        .select('*', { count: 'exact', head: true })
+        .eq('project_id', projectId);
+      
+      if (countError) {
+        console.error("Error checking project test cases count:", countError);
+        // Continue with duplicate checking in case of error to be safe
+        existingTestCasesCount = 1;
+      } else {
+        existingTestCasesCount = count || 0;
+      }
+    } else {
+      // If no project or work item specified, check all test cases
+      const { count, error: countError } = await supabaseAdmin
+        .from('test_cases')
+        .select('*', { count: 'exact', head: true });
+      
+      if (countError) {
+        console.error("Error checking total test cases count:", countError);
+        // Continue with duplicate checking in case of error to be safe
+        existingTestCasesCount = 1;
+      } else {
+        existingTestCasesCount = count || 0;
+      }
+    }
+    
+    // If no existing test cases, skip duplicate checking entirely
+    if (existingTestCasesCount === 0) {
+      console.log(`No existing test cases found (scope: ${workItemId ? 'work item ' + workItemId : projectId ? 'project ' + projectId : 'global'}). Skipping duplicate detection for ${testCases.length} test cases.`);
+      
+      return testCases.map(testCase => ({
+        testCase,
+        isDuplicate: false,
+        duplicateType: 'none' as const
+      }));
+    }
+    
+    console.log(`Found ${existingTestCasesCount} existing test cases. Proceeding with duplicate detection for ${testCases.length} new test cases.`);
     
     // Note: checkAgainstExistingOnly parameter is included for API compatibility
     // This method already checks against existing saved test cases by default
@@ -330,12 +397,45 @@ export class EmbeddingService {
         const content = this.createTestCaseContentFromPartial(testCase);
         const contentHash = this.generateContentHash(content);
 
-        // First check for exact content hash match
-        const { data: exactMatches, error: exactError } = await supabaseAdmin
-          .from('test_cases')
-          .select('id, title, content_hash')
-          .eq('content_hash', contentHash)
-          .limit(1);
+        // First check for exact content hash match (optionally filtered by work item)
+        let exactMatches: any[] | null = null;
+        let exactError: any = null;
+
+        if (workItemId) {
+          // Get test case IDs related to this work item first
+          const { data: workItemTestCases, error: workItemError } = await supabaseAdmin
+            .from('test_case_work_item_relations')
+            .select('test_case_id')
+            .eq('work_item_id', workItemId);
+
+          if (workItemError) {
+            console.error("Error getting work item test cases:", workItemError);
+            exactError = workItemError;
+          } else if (workItemTestCases && workItemTestCases.length > 0) {
+            const testCaseIds = workItemTestCases.map(r => r.test_case_id);
+            
+            // Check for exact matches within this work item's test cases
+            const { data: matches, error: matchError } = await supabaseAdmin
+              .from('test_cases')
+              .select('id, title, content_hash')
+              .eq('content_hash', contentHash)
+              .in('id', testCaseIds)
+              .limit(1);
+            
+            exactMatches = matches;
+            exactError = matchError;
+          }
+        } else {
+          // Check all test cases in the project if no work item specified
+          const { data: matches, error: matchError } = await supabaseAdmin
+            .from('test_cases')
+            .select('id, title, content_hash')
+            .eq('content_hash', contentHash)
+            .limit(1);
+          
+          exactMatches = matches;
+          exactError = matchError;
+        }
 
         if (exactError) {
           console.error("Error checking exact matches:", exactError);
@@ -356,7 +456,8 @@ export class EmbeddingService {
         const similarCases = await this.findSimilarTestCasesByContent(
           testCase, 
           similarityThreshold,
-          projectId
+          projectId,
+          workItemId
         );
 
         if (similarCases.length > 0) {

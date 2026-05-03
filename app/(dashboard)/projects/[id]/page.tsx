@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { WorkItemsList } from "@/components/dashboard/work-items-list";
+import { ProjectTabs } from "@/components/projects/project-tabs";
 import {
   Card,
   CardContent,
@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { GitBranch, Settings, RefreshCw } from "lucide-react";
+import { GitBranch, Settings } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -85,53 +85,10 @@ export default async function ProjectDetailPage({
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <span className="text-gray-500">Organization:</span>
-              <div className="font-medium">
-                {transformedProject.organization}
-              </div>
-            </div>
-            <div>
-              <span className="text-gray-500">Project:</span>
-              <div className="font-medium">{transformedProject.project}</div>
-            </div>
-            <div>
-              <span className="text-gray-500">Created:</span>
-              <div className="font-medium">
-                {transformedProject.createdAt.toLocaleDateString()}
-              </div>
-            </div>
-            <div>
-              <span className="text-gray-500">Last Sync:</span>
-              <div className="font-medium">
-                {transformedProject.lastSync
-                  ? transformedProject.lastSync.toLocaleDateString()
-                  : "Never"}
-              </div>
-            </div>
-          </div>
-        </CardContent>
       </Card>
 
-      {/* Work Items Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Work Items</CardTitle>
-          <CardDescription>
-            User stories, tasks, bugs, and features from Azure DevOps
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <WorkItemsList
-            organization={transformedProject.organization}
-            project={transformedProject.project}
-            token={transformedProject.token}
-            projectId={transformedProject.id}
-          />
-        </CardContent>
-      </Card>
+      {/* Tabbed Interface */}
+      <ProjectTabs project={transformedProject} />
     </div>
   );
 }
