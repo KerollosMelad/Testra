@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
-/**
- * DEMO ONLY — intentional anti-pattern (DB call inside a loop).
- * For exercising the PR review skill; remove this route after testing.
- */
 export async function GET() {
   try {
     const { data: projects, error: projectsError } = await supabaseAdmin
@@ -22,7 +18,6 @@ export async function GET() {
     const perProjectCounts: Array<{ projectId: string; testCaseCount: number }> =
       [];
 
-    // Bad: runs one COUNT query per project (N+1).
     for (const row of projects) {
       const { count, error } = await supabaseAdmin
         .from("test_cases")
