@@ -7,7 +7,7 @@
 # next.js
 /.next/
 /out/
-/.cursor/
+# /.cursor/
 
 # production
 /build
