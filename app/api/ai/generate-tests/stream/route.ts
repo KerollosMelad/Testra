@@ -43,10 +43,29 @@ export async function POST(request: NextRequest) {
       requestData
     );
     
-    // Return streaming response
+    // Return streaming response with timeout protection
     return new Response(
       new ReadableStream({
         async start(controller) {
+          let streamTimeout: NodeJS.Timeout | null = null;
+          let isStreamComplete = false;
+
+          // Set up overall timeout for the stream (especially important for Vercel)
+          const STREAM_TIMEOUT = 4 * 60 * 1000; // 4 minutes max for entire stream
+          streamTimeout = setTimeout(() => {
+            if (!isStreamComplete) {
+              console.warn('Stream timeout reached, forcing completion');
+              const timeoutData = JSON.stringify({
+                type: 'error',
+                data: {
+                  error: 'Stream timeout reached. The generation process took too long.'
+                }
+              });
+              controller.enqueue(`data: ${timeoutData}\n\n`);
+              controller.close();
+            }
+          }, STREAM_TIMEOUT);
+
           try {
             const generator = createAITestGenerator(
               project.openaiApiKey,
@@ -73,8 +92,15 @@ export async function POST(request: NextRequest) {
 
             let allTestCases: any[] = [];
             let allSuggestions: string[] = [];
+            let chunkCount = 0;
+            let lastChunkTime = Date.now();
 
             for await (const result of generator.generateTestCasesStreaming(context, streamOptions)) {
+              chunkCount++;
+              lastChunkTime = Date.now();
+              
+              console.log(`Processing chunk ${chunkCount}: ${result.chunkId}, isComplete: ${result.isComplete}`);
+
               // Send chunk data
               const chunkData = JSON.stringify({
                 type: 'chunk',
@@ -97,10 +123,11 @@ export async function POST(request: NextRequest) {
               allTestCases = [...allTestCases, ...result.chunk.testCases];
               allSuggestions = [...allSuggestions, ...result.chunk.suggestions];
 
-              // Small delay to ensure UI can keep up
-              await new Promise(resolve => setTimeout(resolve, 100));
+              // Small delay to ensure UI can keep up and prevent overwhelming the connection
+              await new Promise(resolve => setTimeout(resolve, 200));
 
               if (result.isComplete) {
+                console.log(`Stream completed after ${chunkCount} chunks`);
                 // Send completion event
                 const completeData = JSON.stringify({
                   type: 'complete',
@@ -111,11 +138,29 @@ export async function POST(request: NextRequest) {
                   }
                 });
                 controller.enqueue(`data: ${completeData}\n\n`);
+                isStreamComplete = true;
                 break;
               }
             }
 
+            // Safety check: if we've processed chunks but never got isComplete=true
+            if (!isStreamComplete && chunkCount > 0) {
+              console.warn(`Stream ended without completion flag after ${chunkCount} chunks`);
+              const forceCompleteData = JSON.stringify({
+                type: 'complete',
+                data: {
+                  totalTestCases: allTestCases.length,
+                  totalSuggestions: allSuggestions.length,
+                  finalConfidence: 0.8,
+                  forced: true
+                }
+              });
+              controller.enqueue(`data: ${forceCompleteData}\n\n`);
+              isStreamComplete = true;
+            }
+
           } catch (error) {
+            console.error('Error in streaming generation:', error);
             const errorData = JSON.stringify({
               type: 'error',
               data: {
@@ -124,6 +169,10 @@ export async function POST(request: NextRequest) {
             });
             controller.enqueue(`data: ${errorData}\n\n`);
           } finally {
+            if (streamTimeout) {
+              clearTimeout(streamTimeout);
+            }
+            isStreamComplete = true;
             controller.close();
           }
         }

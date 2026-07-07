@@ -1,4 +1,4 @@
-import { createOpenAIClient, OpenAITestGenerationResponse } from './openai';
+import { createOpenAIClient, OpenAITestGenerationResponse, handleOpenAIError, retryWithBackoff } from './openai';
 import { WorkItem, TestCase, TestGenerationContext, TestGenerationResult, EnhancedTestCase } from './types';
 import { createEmbeddingService } from './embedding-service';
 import OpenAI from 'openai';
@@ -193,14 +193,21 @@ export class AITestGenerator {
   private async getAIResponse(prompt: string, testType: string = 'integration'): Promise<OpenAITestGenerationResponse> {
     const completionParams = this.buildCompletionParams(prompt, testType);
 
-    const completion = await this.openai.chat.completions.create(completionParams);
+    try {
+      const completion = await retryWithBackoff(async () => {
+        return await this.openai.chat.completions.create(completionParams);
+      }, 3, 2000); // 3 retries with 2 second base delay
 
-    const response = completion.choices[0]?.message?.content;
-    if (!response) {
-      throw new Error('No response from OpenAI');
+      const response = completion.choices[0]?.message?.content;
+      if (!response) {
+        throw new Error('No response from OpenAI');
+      }
+
+      return this.parseAIResponse(response);
+    } catch (error) {
+      console.error('OpenAI API call failed:', error);
+      throw handleOpenAIError(error);
     }
-
-    return this.parseAIResponse(response);
   }
 
   private buildCompletionParams(prompt: string, testType: string = 'integration'): any {
@@ -726,9 +733,12 @@ Please generate clean, well-commented, and executable test code that follows bes
       let previousTests: TestCase[] = [];
       let previousSummary = '';
 
-      // Process chunks
+      // Process chunks with timeout protection
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
+        const isLastChunk = i === chunks.length - 1;
+        
+        console.log(`Processing chunk ${i + 1}/${chunks.length}: ${chunk.id} (last: ${isLastChunk})`);
         
         // Create chunked context
         const chunkedContext: ChunkedGenerationContext = {
@@ -742,11 +752,17 @@ Please generate clean, well-commented, and executable test code that follows bes
         };
 
         try {
-          // Generate tests for this chunk
-          const result = await this.generateTestCasesForChunk(chunkedContext);
+          // Add timeout for individual chunk generation
+          const chunkTimeout = 90000; // 90 seconds per chunk
+          const chunkResult = await Promise.race([
+            this.generateTestCasesForChunk(chunkedContext),
+            new Promise<never>((_, reject) => 
+              setTimeout(() => reject(new Error(`Chunk ${chunk.id} timed out after ${chunkTimeout/1000} seconds`)), chunkTimeout)
+            )
+          ]);
           
           // Add covered criteria to test cases
-          const enhancedTestCases = result.testCases.map(tc => ({
+          const enhancedTestCases = chunkResult.testCases.map(tc => ({
             ...tc,
             coveredCriteria: chunk.originalCriteria,
             projectId: context.userStory.projectId || ''
@@ -756,12 +772,14 @@ Please generate clean, well-commented, and executable test code that follows bes
           previousTests = [...previousTests, ...enhancedTestCases];
           previousSummary = this.createDetailedTestSummary(previousTests);
 
+          console.log(`Chunk ${i + 1} completed with ${enhancedTestCases.length} test cases`);
+
           yield {
             chunk: {
-              ...result,
+              ...chunkResult,
               testCases: enhancedTestCases
             },
-            isComplete: i === chunks.length - 1,
+            isComplete: isLastChunk,
             progress: Math.round(((i + 1) / chunks.length) * 100),
             chunkId: chunk.id,
             currentChunkIndex: i,
@@ -778,10 +796,10 @@ Please generate clean, well-commented, and executable test code that follows bes
             chunk: {
               testCases: [],
               relationships: [],
-              suggestions: [`Failed to generate tests for criteria: ${chunk.originalCriteria.join(', ')}`],
+              suggestions: [`Failed to generate tests for criteria: ${chunk.originalCriteria.join(', ')}. Error: ${error instanceof Error ? error.message : 'Unknown error'}`],
               confidence: 0
             },
-            isComplete: i === chunks.length - 1,
+            isComplete: isLastChunk,
             progress: Math.round(((i + 1) / chunks.length) * 100),
             chunkId: chunk.id,
             currentChunkIndex: i,
@@ -1114,20 +1132,41 @@ Please generate clean, well-commented, and executable test code that follows bes
   // Enhanced method for chunk-specific generation
   private async generateTestCasesForChunk(context: ChunkedGenerationContext): Promise<TestGenerationResult> {
     try {
-      // Enhance context with similar items (only for integration tests)
-      const enhancedContext = await this.enhanceContextWithSimilarItems(context);
+      console.log(`Generating test cases for chunk: ${context.currentChunk?.id}`);
+      
+      // Enhance context with similar items (only for integration tests) with timeout
+      const enhancedContext = await Promise.race([
+        this.enhanceContextWithSimilarItems(context),
+        new Promise<ChunkedGenerationContext>((resolve) => 
+          setTimeout(() => {
+            console.warn('Context enhancement timeout, using original context');
+            resolve(context);
+          }, 15000) // 15 second timeout for context enhancement
+        )
+      ]);
       
       // Build chunk-specific prompt
       const prompt = this.buildChunkedPrompt(enhancedContext);
+      console.log(`Prompt built for chunk: ${context.currentChunk?.id}, length: ${prompt.length}`);
       
-      // Get AI response
-      const response = await this.getAIResponse(prompt, context.testType);
+      // Get AI response with explicit timeout
+      const response = await Promise.race([
+        this.getAIResponse(prompt, context.testType),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('OpenAI API request timed out after 60 seconds')), 60000)
+        )
+      ]);
+      
+      console.log(`AI response received for chunk: ${context.currentChunk?.id}`);
       
       // Transform and return result
-      return this.transformToTestGenerationResult(response, enhancedContext);
+      const result = this.transformToTestGenerationResult(response, enhancedContext);
+      console.log(`Transformation complete for chunk: ${context.currentChunk?.id}, test cases: ${result.testCases.length}`);
+      
+      return result;
     } catch (error) {
-      console.error('Error generating test cases for chunk:', error);
-      throw new Error(`Failed to generate test cases for chunk: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error(`Error generating test cases for chunk ${context.currentChunk?.id}:`, error);
+      throw new Error(`Failed to generate test cases for chunk ${context.currentChunk?.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

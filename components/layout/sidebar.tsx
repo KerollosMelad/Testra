@@ -1,14 +1,13 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { Home, FolderOpen, MessageSquare, Settings, TestTube } from "lucide-react"
+import { Home, FolderOpen, MessageSquare, Settings } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
   { name: "Projects", href: "/projects", icon: FolderOpen },
-  { name: "Test Cases", href: "/test-cases", icon: TestTube },
   { name: "AI Chat", href: "/chat", icon: MessageSquare },
   { name: "Settings", href: "/settings", icon: Settings },
 ]

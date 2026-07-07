@@ -1,5 +1,6 @@
-import { ProjectCard } from "@/components/dashboard/project-card";
 import { StatsOverview } from "@/components/dashboard/stats-overview";
+import { RecentActivity } from "@/components/dashboard/recent-activity";
+import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -9,200 +10,84 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import Link from "next/link";
-import { supabaseAdmin } from "@/lib/supabase";
-import { getProjectStats } from "@/lib/azure-devops";
+import { Plus, TrendingUp, Zap } from "lucide-react";
 
-export default async function DashboardPage() {
-  // Fetch real projects from database
-  const { data: projectsData } = await supabaseAdmin
-    .from("projects")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(3); // Limit to 3 projects for dashboard view
-
-  // Transform the snake_case fields back to camelCase
-  const projects = (projectsData || []).map((project: any) => ({
-    id: project.id,
-    name: project.name,
-    description: project.description,
-    organization: project.organization,
-    project: project.project,
-    token: project.token,
-    openaiApiKey: project.openai_api_key,
-    aiModel: project.ai_model,
-    temperature: project.temperature,
-    maxTokens: project.max_tokens,
-    autoGeneration: project.auto_generation,
-    aiChat: project.ai_chat,
-    codeGeneration: project.code_generation,
-    createdAt: new Date(project.created_at),
-    lastSync: project.last_sync ? new Date(project.last_sync) : undefined,
-  }));
-
-  // Type for the transformed project
-  type TransformedProject = typeof projects[0];
-
-  // Fetch stats for each project with error handling
-  const projectsWithStats = await Promise.allSettled(
-    projects.map(async (project: TransformedProject) => {
-      try {
-        const stats = await getProjectStats(
-          project.organization,
-          project.project,
-          project.token,
-          project.id, // Pass project ID to get test cases count from database
-        );
-
-        return {
-          id: project.id,
-          name: project.name,
-          description: project.description || undefined,
-          source: "azure-devops" as const,
-          organization: project.organization,
-          project: project.project,
-          storiesCount: stats.storiesCount,
-          testsCount: stats.testsCount,
-          lastSync: project.lastSync || project.createdAt,
-          createdAt: project.createdAt,
-          isConnected: stats.isConnected,
-          error: stats.error,
-        };
-      } catch (error) {
-        return {
-          id: project.id,
-          name: project.name,
-          description: project.description || undefined,
-          source: "azure-devops" as const,
-          organization: project.organization,
-          project: project.project,
-          storiesCount: 0,
-          testsCount: 0,
-          lastSync: project.lastSync || project.createdAt,
-          createdAt: project.createdAt,
-          isConnected: false,
-          error: `Failed to fetch project stats: ${error instanceof Error ? error.message : "Unknown error"}`,
-        };
-      }
-    }),
-  );
-
-  // Extract successful results and handle failures gracefully
-  const validProjects = projectsWithStats.map((result, index) => {
-    if (result.status === "fulfilled") {
-      return result.value;
-    } else {
-      // Return project with default stats
-      const project = projects[index];
-      return {
-        id: project.id,
-        name: project.name,
-        description: project.description || undefined,
-        source: "azure-devops" as const,
-        organization: project.organization,
-        project: project.project,
-        storiesCount: 0,
-        testsCount: 0,
-        lastSync: project.lastSync || project.createdAt,
-        createdAt: project.createdAt,
-        isConnected: false,
-        error: `Promise failed: ${result.reason}`,
-      };
-    }
-  });
+export default function DashboardPage() {
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Welcome Section */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">
-            Welcome to Testra
-          </h1>
-          <p className="text-gray-600 mt-1">
-            Manage your test automation projects and AI-generated test cases
-          </p>
-        </div>
-      </div>
+      <DashboardHeader />
 
       {/* Stats Overview */}
       <StatsOverview />
 
-      {/* Recent Activity */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Activity</CardTitle>
-          <CardDescription>
-            Latest test generation and project updates
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-              <div>
-                <p className="font-medium text-sm">
-                  Generated 12 test cases for "User Authentication"
-                </p>
-                <p className="text-xs text-gray-500">
-                  E-Commerce Platform • 2 hours ago
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-              <div>
-                <p className="font-medium text-sm">
-                  Synced 8 new user stories from Azure DevOps
-                </p>
-                <p className="text-xs text-gray-500">
-                  Mobile App API • 4 hours ago
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-              <div>
-                <p className="font-medium text-sm">
-                  Generated Cypress automation code
-                </p>
-                <p className="text-xs text-gray-500">
-                  Admin Dashboard • 1 day ago
-                </p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Projects Grid */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold text-gray-900">Your Projects</h2>
-          {projects.length > 0 && (
-            <Link href="/projects">
-              <Button variant="outline" size="sm">
-                View All
-              </Button>
-            </Link>
-          )}
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Recent Activity - Takes 2/3 width on large screens */}
+        <div className="lg:col-span-2">
+          <RecentActivity />
         </div>
 
-        {projects.length === 0 ? (
-          <Card className="text-center py-8">
-            <CardContent>
-              <p className="text-gray-500 mb-4">
-                No projects yet. Create your first project to get started!
-              </p>
-              <Link href="/projects/new">
-                <Button>Create Project</Button>
+        {/* Quick Actions - Takes 1/3 width on large screens */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="w-5 h-5 text-yellow-600" />
+                Quick Actions
+              </CardTitle>
+              <CardDescription>
+                Get started with common tasks
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Link href="/projects/new" className="block">
+                <Button variant="outline" className="w-full justify-start">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create New Project
+                </Button>
+              </Link>
+              <Link href="/projects" className="block">
+                <Button variant="outline" className="w-full justify-start">
+                  <TrendingUp className="w-4 h-4 mr-2" />
+                  View All Projects
+                </Button>
               </Link>
             </CardContent>
           </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {validProjects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
-            ))}
-          </div>
-        )}
+
+          {/* AI Features Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">🤖 AI Features</CardTitle>
+              <CardDescription>
+                Powered by advanced AI technology
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full" />
+                <span>Automated test case generation</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                <span>Smart duplicate detection</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-purple-500 rounded-full" />
+                <span>Code generation for automation</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-orange-500 rounded-full" />
+                <span>Azure DevOps integration</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
+
+
     </div>
   );
 }
